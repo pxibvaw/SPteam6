@@ -1,0 +1,20 @@
+# 공통 라이브러리 (맥·Pi 모두) — Python 3.11 기준
+# 설치: pip install -r requirements.txt
+# 버전을 바꿀 때는 팀원에게 먼저 알리고, 맥·Pi 둘 다에서 설치되는지 확인하기
+
+# --- AI: 카메라 ---
+mediapipe==0.10.18              # 자세 추정 (Pi용 aarch64 설치 파일이 있는 버전)
+opencv-contrib-python==4.10.0.84 # 영상 처리. mediapipe가 요구하는 contrib 버전 (opencv-python 따로 설치 금지)
+
+# --- AI: 학습·분석 ---
+numpy==1.26.4                   # mediapipe 0.10.18이 numpy 2를 지원하지 않음
+pandas==2.2.3
+scikit-learn==1.5.2             # RF / SVM / KNN
+matplotlib==3.9.2               # confusion matrix, 그래프
+
+# --- 공통 ---
+PyYAML==6.0.2                   # config.yaml 읽기
+
+# --- 하드웨어: 서버 ---
+fastapi==0.115.4
+uvicorn==0.32.0

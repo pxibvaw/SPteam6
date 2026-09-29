@@ -1,0 +1,14 @@
+# Pi 전용 라이브러리 — 맥에는 설치하지 않음
+# 설치: pip install -r requirements-pi.txt  (공통 requirements.txt도 함께 설치됨)
+#
+# Picamera2는 pip가 아니라 Pi OS 패키지로 설치해야 함:
+#   sudo apt install -y python3-picamera2
+# 그리고 가상환경을 만들 때 시스템 패키지를 보이게 해야 함:
+#   python3 -m venv --system-site-packages .venv
+# (gpiozero도 Pi OS에 기본 설치되어 있어서 같은 방법으로 사용)
+
+-r requirements.txt
+
+spidev==3.8                    # MCP3008(ADC) SPI 통신 → FSR 406 압력센서 읽기
+vl53l1x==0.0.7                 # VL53L1X 거리센서 (Pimoroni, I2C) — Pi 4 64-bit용 설치 파일 있음
+smbus2==0.6.1                  # I2C 통신 (vl53l1x가 사용)

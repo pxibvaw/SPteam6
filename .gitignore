@@ -1,0 +1,45 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# ===== 에디터 / OS =====
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# ===== Android (app/) =====
+app/**/.gradle/
+app/**/build/
+app/**/local.properties
+app/**/.idea/
+app/**/*.iml
+app/**/captures/
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# ===== 데이터: 구조(.gitkeep)와 sample/만 올림 =====
+data/raw/*
+data/synthetic/*
+data/processed/*
+!data/**/.gitkeep
+
+# ===== 모델: 최종 모델(final_ 로 시작)만 올림 =====
+ai/models/*
+!ai/models/.gitkeep
+!ai/models/final_*
+
+# ===== 서버 DB / 로그 =====
+*.db
+*.sqlite3
+*.log
+
+# ===== 비밀 정보 =====
+.env
