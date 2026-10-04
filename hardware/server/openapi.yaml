@@ -1,0 +1,734 @@
+# 자동 생성 파일 — 직접 고치지 말고 hardware/server/schemas.py를 고친 뒤
+#   python -m hardware.server.mock_server --export-openapi
+openapi: 3.1.0
+info:
+  title: SitSense API (mock)
+  description: 'Raspberry Pi 서버 → 안드로이드 앱. 같은 Wi-Fi에서 `http://<Pi IP>:8000`.
+
+
+    지금은 **mock 서버**: 시나리오 더미 데이터와 가짜 판단 결과를 준다. 시각은 time.time() 초, 거리 mm, 각도 °, 비율
+    0~1. 표시용 글자는 앱이 만든다. 영상 이미지는 어떤 응답에도 없다.'
+  version: 0.1.0-mock
+paths:
+  /status:
+    get:
+      tags:
+      - 기기
+      summary: 서버·센서 상태
+      operationId: status_status_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /current:
+    get:
+      tags:
+      - 자세
+      summary: 지금 자세 (1~3초마다 호출)
+      operationId: current_current_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Current'
+        '404':
+          description: 아직 기록 없음
+  /history:
+    get:
+      tags:
+      - 자세
+      summary: 최근 판단 기록 (1초에 1개)
+      operationId: history_history_get
+      parameters:
+      - name: seconds
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 3600
+          minimum: 1
+          description: 최근 몇 초
+          default: 60
+          title: Seconds
+        description: 최근 몇 초
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/History'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /baseline:
+    get:
+      tags:
+      - 기준 자세
+      summary: 기준(바른) 자세 측정값
+      operationId: baseline_baseline_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Baseline'
+  /calibrate:
+    post:
+      tags:
+      - 기준 자세
+      summary: 기준 자세 다시 측정 (그동안 바른 자세로 앉기)
+      operationId: calibrate_calibrate_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalibrateResult'
+  /mock/scenarios:
+    get:
+      tags:
+      - mock 전용
+      summary: 시나리오 목록
+      operationId: scenarios_mock_scenarios_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/ScenarioInfo'
+                type: array
+                title: Response Scenarios Mock Scenarios Get
+  /mock/scenario:
+    post:
+      tags:
+      - mock 전용
+      summary: 재생할 시나리오 바꾸기 (기준 자세부터 다시 시작)
+      operationId: select_scenario_mock_scenario_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScenarioSelect'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioInfo'
+        '404':
+          description: 없는 시나리오
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+components:
+  schemas:
+    Baseline:
+      properties:
+        state:
+          $ref: '#/components/schemas/BaselineState'
+          description: none 측정 전 / measuring 측정 중 / ready 완료
+        remaining_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Remaining Sec
+          description: 측정 중이면 남은 초
+        created_at:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Created At
+          description: 기준값을 만든 시각
+        seconds:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Seconds
+          description: 측정 시간
+        pressure:
+          anyOf:
+          - items:
+              type: number
+            type: array
+          - type: 'null'
+          title: Pressure
+          description: 채널별 평균 압력
+        distance_mm:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Distance Mm
+          description: 기준 화면 거리 (중앙값)
+        pose:
+          anyOf:
+          - additionalProperties:
+              items:
+                type: number
+              type: array
+            type: object
+          - type: 'null'
+          title: Pose
+          description: 부위 7개의 평균 좌표 [x, y, z, visibility] (0~1 비율, 영상 아님)
+      type: object
+      required:
+      - state
+      title: Baseline
+      description: 기준(바른) 자세 측정값. 측정 중에도 이전 기준값을 준다
+    BaselineState:
+      type: string
+      enum:
+      - none
+      - measuring
+      - ready
+      title: BaselineState
+    CalibrateResult:
+      properties:
+        started:
+          type: boolean
+          title: Started
+        seconds:
+          type: number
+          title: Seconds
+          description: 측정에 걸리는 초 (이 동안 바른 자세로 앉기)
+      type: object
+      required:
+      - started
+      - seconds
+      title: CalibrateResult
+    Confidence:
+      properties:
+        seat:
+          type: number
+          maximum: 1.0
+          minimum: 0.0
+          title: Seat
+          description: 좌면 판단 확신도 (0~1)
+        head:
+          type: number
+          maximum: 1.0
+          minimum: 0.0
+          title: Head
+          description: 목 판단 확신도 (0~1). 카메라 미인식이면 0
+        tilt:
+          type: number
+          maximum: 1.0
+          minimum: 0.0
+          title: Tilt
+          description: 기울기 판단 확신도 (0~1). 카메라 미인식이면 0
+      type: object
+      required:
+      - seat
+      - head
+      - tilt
+      title: Confidence
+    Cues:
+      properties:
+        neck_drop:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Neck Drop
+        face_grow:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Face Grow
+        closer:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Closer
+        shoulder_angle:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Shoulder Angle
+        head_angle:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Head Angle
+        head_offset:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Head Offset
+      type: object
+      title: Cues
+      description: 각 단서가 기준값(threshold)을 넘었는지. 판단할 수 없으면 null
+    Current:
+      properties:
+        ts:
+          type: number
+          title: Ts
+          description: 측정 시각 (time.time() 초)
+        seated:
+          type: boolean
+          title: Seated
+          description: 앉아 있는지 (seat_state != empty)
+        sitting_since:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Sitting Since
+          description: 이번 연속 착석 시작 시각. 자리 비움이면 null
+        state_since:
+          type: number
+          title: State Since
+          description: 지금 자세(좌면·목·기울기)가 시작된 시각
+        seat_state:
+          $ref: '#/components/schemas/SeatState'
+        head_state:
+          $ref: '#/components/schemas/HeadState'
+        tilt_state:
+          $ref: '#/components/schemas/TiltState'
+        confidence:
+          $ref: '#/components/schemas/Confidence'
+        postures:
+          items:
+            type: string
+          type: array
+          title: Postures
+          description: 지금 나타난 나쁜 자세 (cross_left, cross_right, lean_left, lean_right,
+            forward_head, tilt_left, tilt_right). 없으면 []
+        pending:
+          items:
+            $ref: '#/components/schemas/Pending'
+          type: array
+          title: Pending
+          description: 확정 대기 중인 자세 변화
+        deltas:
+          $ref: '#/components/schemas/Deltas'
+        cues:
+          $ref: '#/components/schemas/Cues'
+        distance_mm:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Distance Mm
+          description: 화면 거리 (mm). 측정 실패면 null
+        distance_level:
+          $ref: '#/components/schemas/DistanceLevel'
+          description: ok 50cm 이상 / caution 40~50cm / warning 40cm 미만 / unknown
+        closer_than_baseline:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Closer Than Baseline
+          description: 기준보다 10cm 이상 가까운지. 기준값 없으면 null
+        pressure:
+          items:
+            type: integer
+          type: array
+          title: Pressure
+          description: FSR 채널별 원래 값 (0~1023). 순서 = config.yaml pressure.positions
+        pressure_ratio:
+          anyOf:
+          - items:
+              type: number
+            type: array
+          - type: 'null'
+          title: Pressure Ratio
+          description: 채널별 압력 비율 (합 1). 자리 비움이면 null
+        center_of_pressure:
+          anyOf:
+          - $ref: '#/components/schemas/Point'
+          - type: 'null'
+          description: 압력 중심. x 왼쪽 -1 ~ 오른쪽 +1, y 뒤 -1 ~ 앞 +1 (사람 기준). 자리 비움이면 null
+        pose_detected:
+          type: boolean
+          title: Pose Detected
+          description: 카메라가 사람을 찾았는지
+        camera_age_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Camera Age Sec
+          description: 카메라 결과가 몇 초 전 것인지 (초당 약 5장)
+        baseline_ready:
+          type: boolean
+          title: Baseline Ready
+          description: 기준 자세가 있는지. false면 deltas 대부분이 null
+      type: object
+      required:
+      - ts
+      - seated
+      - state_since
+      - seat_state
+      - head_state
+      - tilt_state
+      - confidence
+      - postures
+      - pending
+      - deltas
+      - cues
+      - distance_level
+      - pressure
+      - pose_detected
+      - baseline_ready
+      title: Current
+      description: 지금 자세 — 홈 화면용, 1~3초마다 호출
+    Deltas:
+      properties:
+        neck_drop:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Neck Drop
+          description: 목 높이가 기준보다 줄어든 비율. +0.12 이상이면 거북목 단서
+        face_grow:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Face Grow
+          description: 얼굴 크기가 기준보다 커진 비율. +0.08 이상이면 거북목 단서
+        closer_mm:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Closer Mm
+          description: 기준보다 화면에 가까워진 거리 (mm). +면 가까워짐
+        shoulder_angle:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Shoulder Angle
+          description: 어깨 선 기울기 변화 (°). + 사람 왼쪽 / - 오른쪽
+        head_angle:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Head Angle
+          description: 눈 선 기울기 변화 (°). + 왼쪽 / - 오른쪽
+        head_offset:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Head Offset
+          description: 코의 좌우 이동 (어깨 너비 대비 비율). + 왼쪽 / - 오른쪽
+      type: object
+      title: Deltas
+      description: 기준 자세 대비 변화량. 카메라 미인식·기준값 없음이면 null
+    DistanceLevel:
+      type: string
+      enum:
+      - ok
+      - caution
+      - warning
+      - unknown
+      title: DistanceLevel
+      description: 화면 거리 단계 (기준값은 config.yaml의 thresholds)
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    HeadState:
+      type: string
+      enum:
+      - normal
+      - forward
+      - unknown
+      title: HeadState
+      description: 목 전방 자세 (카메라 + 거리센서)
+    History:
+      properties:
+        seconds:
+          type: integer
+          title: Seconds
+        items:
+          items:
+            $ref: '#/components/schemas/HistoryItem'
+          type: array
+          title: Items
+      type: object
+      required:
+      - seconds
+      - items
+      title: History
+      description: 최근 판단 기록 (1초에 1개)
+    HistoryItem:
+      properties:
+        ts:
+          type: number
+          title: Ts
+        seated:
+          type: boolean
+          title: Seated
+        seat_state:
+          $ref: '#/components/schemas/SeatState'
+        head_state:
+          $ref: '#/components/schemas/HeadState'
+        tilt_state:
+          $ref: '#/components/schemas/TiltState'
+        distance_mm:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Distance Mm
+        distance_level:
+          $ref: '#/components/schemas/DistanceLevel'
+      type: object
+      required:
+      - ts
+      - seated
+      - seat_state
+      - head_state
+      - tilt_state
+      - distance_mm
+      - distance_level
+      title: HistoryItem
+    Pending:
+      properties:
+        kind:
+          $ref: '#/components/schemas/StateKind'
+          description: 어떤 판단인지 (seat / head / tilt)
+        state:
+          type: string
+          title: State
+          description: '바뀔 상태 값 (예: forward)'
+        remaining_sec:
+          type: number
+          minimum: 0.0
+          title: Remaining Sec
+          description: 확정까지 남은 초
+      type: object
+      required:
+      - kind
+      - state
+      - remaining_sec
+      title: Pending
+      description: 새 자세가 나타났지만 아직 short_filter_sec(3초)가 안 지나 확정되지 않은 것
+    Point:
+      properties:
+        x:
+          type: number
+          title: X
+        y:
+          type: number
+          title: Y
+      type: object
+      required:
+      - x
+      - y
+      title: Point
+    ScenarioInfo:
+      properties:
+        name:
+          type: string
+          title: Name
+        description:
+          type: string
+          title: Description
+        total_sec:
+          type: number
+          title: Total Sec
+        steps:
+          items:
+            $ref: '#/components/schemas/ScenarioStep'
+          type: array
+          title: Steps
+      type: object
+      required:
+      - name
+      - description
+      - total_sec
+      - steps
+      title: ScenarioInfo
+    ScenarioSelect:
+      properties:
+        name:
+          type: string
+          title: Name
+          examples:
+          - demo
+        loop:
+          type: boolean
+          title: Loop
+          description: 끝나면 처음부터 다시
+          default: true
+        seed:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Seed
+          description: 같은 seed면 같은 값
+      type: object
+      required:
+      - name
+      title: ScenarioSelect
+    ScenarioStep:
+      properties:
+        seconds:
+          type: number
+          title: Seconds
+        phase:
+          type: string
+          title: Phase
+        seat:
+          $ref: '#/components/schemas/SeatState'
+        head:
+          $ref: '#/components/schemas/HeadState'
+        tilt:
+          $ref: '#/components/schemas/TiltState'
+        faults:
+          items:
+            type: string
+          type: array
+          title: Faults
+      type: object
+      required:
+      - seconds
+      - phase
+      - seat
+      - head
+      - tilt
+      - faults
+      title: ScenarioStep
+    SeatState:
+      type: string
+      enum:
+      - normal
+      - lean_left
+      - lean_right
+      - cross_left
+      - cross_right
+      - empty
+      - unknown
+      title: SeatState
+      description: 좌면 자세 (압력센서)
+    SensorStatus:
+      properties:
+        ok:
+          type: boolean
+          title: Ok
+          description: 최근 2초 안에 정상 값을 읽었는지
+        detail:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Detail
+      type: object
+      required:
+      - ok
+      title: SensorStatus
+    Sensors:
+      properties:
+        pressure:
+          $ref: '#/components/schemas/SensorStatus'
+        distance:
+          $ref: '#/components/schemas/SensorStatus'
+        camera:
+          $ref: '#/components/schemas/SensorStatus'
+      type: object
+      required:
+      - pressure
+      - distance
+      - camera
+      title: Sensors
+    StateKind:
+      type: string
+      enum:
+      - seat
+      - head
+      - tilt
+      title: StateKind
+    Status:
+      properties:
+        api_version:
+          type: string
+          title: Api Version
+          default: 0.1.0-mock
+        mode:
+          type: string
+          title: Mode
+          description: mock(더미 데이터) / real. mock이면 앱에 '예시 데이터' 표시
+        server_time:
+          type: number
+          title: Server Time
+        last_record_ts:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Last Record Ts
+        baseline_ready:
+          type: boolean
+          title: Baseline Ready
+        sensors:
+          $ref: '#/components/schemas/Sensors'
+        scenario:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Scenario
+          description: mock 모드에서 재생 중인 시나리오
+        scenario_elapsed_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Scenario Elapsed Sec
+        scenario_total_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Scenario Total Sec
+      type: object
+      required:
+      - mode
+      - server_time
+      - last_record_ts
+      - baseline_ready
+      - sensors
+      title: Status
+    TiltState:
+      type: string
+      enum:
+      - none
+      - left
+      - right
+      - unknown
+      title: TiltState
+      description: 상체 좌우 기울어짐 (카메라). 방향은 사람 기준
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
