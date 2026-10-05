@@ -44,11 +44,13 @@ from hardware.mock.models import (
     DISTANCE_SENSORS, DistanceModel, PoseModel, PressureModel,
 )
 from hardware.mock.scenarios import PRIORITY, SCENARIOS, Scenario, Step, get_scenario
+from hardware.server.seating import EMPTY_END_SEC
 
 log = logging.getLogger("sitsense.mock")
 
-# ⚠️ config.yaml에 아직 없는 값 → thresholds.empty_off_sec로 추가 제안 (있으면 그 값을 씀)
-EMPTY_OFF_SEC = 5.0             # 자리 비움이 이만큼 이어지면 착석 구간 종료, 카메라·거리 꺼짐
+# 자리 비움이 이만큼 이어지면 착석 구간 종료, 카메라·거리 꺼짐. 서버 착석 구간 로직과 같은 값을 쓴다
+# (config.yaml thresholds.empty_off_sec가 있으면 그 값 — 아직 없어서 추가 제안)
+EMPTY_OFF_SEC = EMPTY_END_SEC
 CAMERA_WARMUP_SEC = 2.0         # 카메라를 다시 켠 뒤 사람을 찾기까지 걸리는 시간
 TS_JITTER_SEC = 0.004           # replay CSV의 시각 흔들림 (실제 10Hz 반복도 정확히 0.1초가 아님)
 

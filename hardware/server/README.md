@@ -54,6 +54,8 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 | GET | `/history?seconds=60` | 최근 판단 기록 (1초에 1개, 최대 1시간) |
 | GET | `/baseline` | 기준(바른) 자세 측정값, 측정 중이면 남은 시간 |
 | POST | `/calibrate` | 기준 자세 다시 측정 (10초 동안 바른 자세) |
+| GET | `/seating` | 지금 착석 구간 (자리 비움 5초 규칙), 지금 순간 normal / abnormal / unknown |
+| GET | `/seating/segments?hours=24` | 끝난 착석 구간 (시작·끝·종료 사유·첫 비정상까지 초·정상/비정상/unknown 초) |
 | GET | `/mock/scenarios` | **mock 전용.** 시나리오 목록 |
 | POST | `/mock/scenario` | **mock 전용.** 시나리오 바꾸기 `{"name": "forward_head", "loop": true}` |
 
@@ -62,6 +64,21 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 - 판단할 수 없는 값은 `null` (카메라 미인식이면 `deltas`가 null, 목·기울기는 `unknown`)
 - **영상 이미지는 어떤 응답에도 없다.** 카메라는 상체 점 좌표(0~1 비율)만
 - `postures` 순서 = 대표 자세 우선순위: **거북목 > 다리 꼬기 > 체중 편향 > 기울어진 자세** (`postures[0]`이 대표)
+
+### 착석 구간 (`seating.py`)
+
+| 규칙 | 값 (상수, ⚠️ 임시값은 실물로 조정) |
+|---|---|
+| 자리 비움 = 그 순간 압력 **채널 평균**이 기준 미만 (6·8채널 똑같이 동작) | `EMPTY_MEAN_ADC = 8` ⚠️ |
+| 자리 비움이 이어지면 구간 종료, **종료 시각 = 판단 시각 − 5초** | `EMPTY_END_SEC = 5` |
+| 구간 밖에서 압력이 이어지면 새 구간, **시작 = 압력이 처음 들어온 시각** | `SIT_CONFIRM_SEC = 1` ⚠️ |
+| 5초 미만 자리 비움 | 구간 유지, 그 시간은 `unknown` |
+| `normal` = 목 normal + 기울기 none + 좌면 normal / `abnormal` = 나쁜 자세 확정 / 그 외 `unknown` | 3초 필터 거친 상태 기준 |
+| 첫 비정상까지 초 | 구간 시작 → 처음 `abnormal` 확정 (3초 유지) |
+
+- `/current`의 `seated`·`sitting_since`는 예전처럼 3초 필터를 따른다 (형식 유지). **착석 시간은 `/seating` 기준으로 쓴다.**
+- 끝난 구간은 지금은 서버 메모리에만 있다 (재시작하면 사라짐). DB 저장·자정 처리·앱 시각 동기화는 다음 단계.
+- 확인: `python -m hardware.server.check_seating` (22개 시나리오 × 8·6채널, 정답과 비교)
 
 ### `/current`의 판단 필드 ← AI 엔진 근거
 

@@ -19,6 +19,7 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 from common.schema import DistanceLevel, HeadState, SeatState, TiltState
+from hardware.server.seating import EndReason, PostureStatus
 
 API_VERSION = "0.1.0-mock"
 
@@ -154,6 +155,36 @@ class Status(BaseModel):
     scenario: str | None = Field(None, description="mock 모드에서 재생 중인 시나리오")
     scenario_elapsed_sec: float | None = None
     scenario_total_sec: float | None = None
+
+
+class SeatingSegment(BaseModel):
+    """착석 구간 한 개. 자리 비움이 5초 이어지면 끝나고, 끝 시각 = 판단 시각 − 5초"""
+    start: float = Field(..., description="착석 시작 시각 (압력이 처음 들어온 순간)")
+    end: float | None = Field(None, description="착석 끝 시각. 진행 중이면 null")
+    end_reason: EndReason | None = Field(None, description="away 자리 비움 5초 / stop 정지 버튼. 진행 중이면 null")
+    duration_sec: float | None = Field(None, description="구간 길이 (진행 중이면 지금까지)")
+    first_abnormal_sec: float | None = Field(
+        None, description="구간 시작 → 첫 비정상 자세 확정(3초 유지)까지 초. 아직 없으면 null")
+    normal_sec: float = Field(..., description="정상 시간 (목 normal + 기울기 none + 좌면 normal)")
+    abnormal_sec: float = Field(..., description="비정상 시간 (나쁜 자세가 하나라도 확정)")
+    unknown_sec: float = Field(..., description="판단 못 한 시간 (카메라 미인식·켜는 중, 기준 측정 전, 5초 미만 자리 비움)")
+
+
+class Seating(BaseModel):
+    """지금 착석 구간 — /current의 seated(3초 필터)와 달리 '자리 비움 5초' 규칙을 따른다"""
+    ts: float
+    seated: bool = Field(..., description="착석 구간 안인지 (5초 미만 자리 비움이면 아직 true)")
+    segment: SeatingSegment | None = Field(None, description="진행 중인 구간. 구간 밖이면 null")
+    status: PostureStatus | None = Field(None, description="지금 순간 normal / abnormal / unknown. 구간 밖이면 null")
+    dominant: str | None = Field(None, description="대표 자세 (postures[0] / normal / unknown / away). 구간 밖이면 null")
+    away_sec: float | None = Field(None, description="구간 중 자리 비움이 이어진 초. 앉아 있으면 null")
+    end_in_sec: float | None = Field(None, description="이대로 비어 있으면 몇 초 뒤 구간이 끝나는지")
+
+
+class SeatingSegments(BaseModel):
+    """끝난 착석 구간 목록 (오래된 것부터). 지금은 서버 메모리에만 있음"""
+    hours: int
+    items: list[SeatingSegment]
 
 
 class ScenarioStep(BaseModel):

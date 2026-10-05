@@ -31,7 +31,8 @@ from hardware.mock.generator import ScenarioPlayer
 from hardware.mock.scenarios import SCENARIOS, Scenario, Step, get_scenario
 from hardware.server.mock_engine import MockEngine
 from hardware.server.schemas import (
-    API_VERSION, Baseline, CalibrateResult, Current, History, ScenarioInfo, ScenarioSelect, Status,
+    API_VERSION, Baseline, CalibrateResult, Current, History, ScenarioInfo, ScenarioSelect, Seating,
+    SeatingSegments, Status,
 )
 
 log = logging.getLogger("sitsense.server")
@@ -161,6 +162,20 @@ def create_app(cfg: dict, scenario: str = "demo", loop: bool = True, seed: int |
             items = list(runtime.engine.history)
         cutoff = now() - seconds
         return {"seconds": seconds, "items": [i for i in items if i["ts"] >= cutoff]}
+
+    @app.get("/seating", response_model=Seating, tags=["착석"],
+             summary="지금 착석 구간 (자리 비움 5초 규칙, 정상/비정상/unknown)")
+    def seating():
+        ts = now()
+        with runtime.lock:
+            return runtime.engine.seating.snapshot(ts)
+
+    @app.get("/seating/segments", response_model=SeatingSegments, tags=["착석"],
+             summary="끝난 착석 구간 목록")
+    def seating_segments(hours: int = Query(24, ge=1, le=48, description="최근 몇 시간 안에 끝난 구간")):
+        with runtime.lock:
+            items = runtime.engine.seating.finished(since_ts=now() - hours * 3600)
+        return {"hours": hours, "items": items}
 
     @app.get("/baseline", response_model=Baseline, tags=["기준 자세"], summary="기준(바른) 자세 측정값")
     def baseline():

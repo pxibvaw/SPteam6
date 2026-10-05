@@ -69,6 +69,50 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /seating:
+    get:
+      tags:
+      - 착석
+      summary: 지금 착석 구간 (자리 비움 5초 규칙, 정상/비정상/unknown)
+      operationId: seating_seating_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Seating'
+  /seating/segments:
+    get:
+      tags:
+      - 착석
+      summary: 끝난 착석 구간 목록
+      operationId: seating_segments_seating_segments_get
+      parameters:
+      - name: hours
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 48
+          minimum: 1
+          description: 최근 몇 시간 안에 끝난 구간
+          default: 24
+          title: Hours
+        description: 최근 몇 시간 안에 끝난 구간
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SeatingSegments'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /baseline:
     get:
       tags:
@@ -436,6 +480,12 @@ components:
       - unknown
       title: DistanceLevel
       description: 화면 거리 단계 (기준값은 config.yaml의 thresholds)
+    EndReason:
+      type: string
+      enum:
+      - away
+      - stop
+      title: EndReason
     HTTPValidationError:
       properties:
         detail:
@@ -534,6 +584,13 @@ components:
       - x
       - y
       title: Point
+    PostureStatus:
+      type: string
+      enum:
+      - normal
+      - abnormal
+      - unknown
+      title: PostureStatus
     ScenarioInfo:
       properties:
         name:
@@ -619,6 +676,114 @@ components:
       - unknown
       title: SeatState
       description: 좌면 자세 (압력센서)
+    Seating:
+      properties:
+        ts:
+          type: number
+          title: Ts
+        seated:
+          type: boolean
+          title: Seated
+          description: 착석 구간 안인지 (5초 미만 자리 비움이면 아직 true)
+        segment:
+          anyOf:
+          - $ref: '#/components/schemas/SeatingSegment'
+          - type: 'null'
+          description: 진행 중인 구간. 구간 밖이면 null
+        status:
+          anyOf:
+          - $ref: '#/components/schemas/PostureStatus'
+          - type: 'null'
+          description: 지금 순간 normal / abnormal / unknown. 구간 밖이면 null
+        dominant:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Dominant
+          description: 대표 자세 (postures[0] / normal / unknown / away). 구간 밖이면 null
+        away_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Away Sec
+          description: 구간 중 자리 비움이 이어진 초. 앉아 있으면 null
+        end_in_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: End In Sec
+          description: 이대로 비어 있으면 몇 초 뒤 구간이 끝나는지
+      type: object
+      required:
+      - ts
+      - seated
+      title: Seating
+      description: 지금 착석 구간 — /current의 seated(3초 필터)와 달리 '자리 비움 5초' 규칙을 따른다
+    SeatingSegment:
+      properties:
+        start:
+          type: number
+          title: Start
+          description: 착석 시작 시각 (압력이 처음 들어온 순간)
+        end:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: End
+          description: 착석 끝 시각. 진행 중이면 null
+        end_reason:
+          anyOf:
+          - $ref: '#/components/schemas/EndReason'
+          - type: 'null'
+          description: away 자리 비움 5초 / stop 정지 버튼. 진행 중이면 null
+        duration_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Duration Sec
+          description: 구간 길이 (진행 중이면 지금까지)
+        first_abnormal_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: First Abnormal Sec
+          description: 구간 시작 → 첫 비정상 자세 확정(3초 유지)까지 초. 아직 없으면 null
+        normal_sec:
+          type: number
+          title: Normal Sec
+          description: 정상 시간 (목 normal + 기울기 none + 좌면 normal)
+        abnormal_sec:
+          type: number
+          title: Abnormal Sec
+          description: 비정상 시간 (나쁜 자세가 하나라도 확정)
+        unknown_sec:
+          type: number
+          title: Unknown Sec
+          description: 판단 못 한 시간 (카메라 미인식·켜는 중, 기준 측정 전, 5초 미만 자리 비움)
+      type: object
+      required:
+      - start
+      - normal_sec
+      - abnormal_sec
+      - unknown_sec
+      title: SeatingSegment
+      description: 착석 구간 한 개. 자리 비움이 5초 이어지면 끝나고, 끝 시각 = 판단 시각 − 5초
+    SeatingSegments:
+      properties:
+        hours:
+          type: integer
+          title: Hours
+        items:
+          items:
+            $ref: '#/components/schemas/SeatingSegment'
+          type: array
+          title: Items
+      type: object
+      required:
+      - hours
+      - items
+      title: SeatingSegments
+      description: 끝난 착석 구간 목록 (오래된 것부터). 지금은 서버 메모리에만 있음
     SensorStatus:
       properties:
         ok:

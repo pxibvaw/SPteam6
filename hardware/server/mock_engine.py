@@ -1,7 +1,8 @@
 """가짜 판단 엔진 — AI 엔진이 hardware 브랜치에 합쳐지기 전까지 mock 서버에서 쓰는 대역
 
 AI 엔진(ai 브랜치 ai/engine/upper_body.py)과 같은 모양의 결과를 낸다.
-    - 좌면: 시나리오 라벨 그대로 (압력 합이 작으면 empty)
+    - 좌면: 시나리오 라벨 그대로 (압력 채널 평균이 작으면 empty — seating.is_empty)
+    - 착석 구간: seating.SeatingTracker (자리 비움 5초 → 구간 종료, 구간별 정상/비정상/unknown 시간)
     - 목·기울기: 라벨에 맞는 변화량(deltas)을 흉내 내고, 판단 규칙은 upper_body.judge()와 같게
       (threshold는 config.yaml의 upper_rules, 없으면 AI 코드의 기본값)
     - 시간 필터: 새 상태가 short_filter_sec(3초) 이상 이어져야 확정 (upper_body.StateFilter와 같은 방식)
@@ -22,6 +23,7 @@ from common.schema import (
 )
 from common.sensors_base import Sample
 from hardware.mock.scenarios import Step
+from hardware.server.seating import SeatingTracker, is_empty
 
 # ai/engine/upper_body.py UpperRules 기본값과 같게 유지
 UPPER_RULE_DEFAULTS = {
@@ -31,7 +33,6 @@ UPPER_RULE_DEFAULTS = {
     "head_angle_deg": 7.0,
     "head_offset": 0.10,
 }
-EMPTY_PRESSURE_TOTAL = 50.0     # 압력 합이 이보다 작으면 자리 비움 (ai/features/pressure.py min_total과 같음)
 SENSOR_OK_SEC = 2.0             # 최근 이 시간 안에 정상 값을 읽었으면 센서 정상
 MAX_GAP_SEC = 5.0               # 기록이 이보다 오래 끊기면 연속 착석이 끊긴 것으로 봄
 HISTORY_SEC = 3600              # 최근 판단 기록 보관 (1초에 1개)
@@ -107,6 +108,7 @@ class MockEngine:
         self._sitting_since: float | None = None
         self._last_seated_ts: float | None = None
         self.last_ok = {"pressure": None, "distance": None, "camera": None}
+        self.seating = SeatingTracker(cfg)
 
     # --- 기준 자세 ----------------------------------------------------------
     def start_baseline(self, ts: float) -> float:
@@ -143,7 +145,7 @@ class MockEngine:
 
     # --- 가짜 판단 ----------------------------------------------------------
     def judge_seat(self, sample: Sample, step: Step) -> tuple[SeatState, float]:
-        if sum(sample.pressure.values) < EMPTY_PRESSURE_TOTAL:
+        if is_empty(sample.pressure.values):
             return SeatState.EMPTY, 0.95
         label = SeatState.NORMAL if step.phase == Phase.BASELINE.value else SeatState(step.seat)
         return label, round(float(self.rng.uniform(0.75, 0.95)), 2)
@@ -235,7 +237,7 @@ class MockEngine:
         values = [int(v) for v in sample.pressure.values]
         total = float(sum(values))
         ratio = cop = None
-        if total >= EMPTY_PRESSURE_TOTAL:
+        if not is_empty(values):
             ratio = [round(v / total, 4) for v in values]
             x, y = (np.asarray(values, dtype=float)[:, None] * self.positions).sum(axis=0) / total
             cop = {"x": round(float(x), 4), "y": round(float(y), 4)}
@@ -248,6 +250,8 @@ class MockEngine:
 
         postures = [name for (kind, value), name in POSTURE_KEYS.items()
                     if {"seat": seat, "head": head, "tilt": tilt}[kind].value == value]
+        self.seating.update(ts, empty=is_empty(values), seat=seat.value, head=head.value,
+                            tilt=tilt.value, postures=postures)
         pending = []
         for kind, f in self.filters.items():
             p = f.pending(ts)
