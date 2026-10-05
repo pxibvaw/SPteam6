@@ -18,7 +18,13 @@
 | `../mock/generator.py` | 시나리오 → `Sample`(압력·거리·카메라 점). 실시간 생성기 + replay CSV 만들기 |
 | `mock_engine.py` | 가짜 판단: AI 엔진(`ai/engine/upper_body.py`)과 같은 모양의 결과(상태, 확신도, deltas, cues, 3초 필터) |
 | `schemas.py` | 앱에 주는 JSON 형식. **API 형식을 바꿀 때는 여기만 고친다** |
-| `mock_server.py` | FastAPI mock 서버 |
+| `mock_server.py` | FastAPI mock 서버 (세션·시각·센서 전원을 따라 시나리오 재생) |
+| `clock.py` | 앱 기준 시각: '앱 시각 − Pi 단조시계' 차이만 저장, `boot_id` |
+| `session.py` | 세션 상태 (idle / running / paused), 경과 시간 |
+| `power.py` | 센서 전원 정책 (세션 상태 + 착석 구간 → 압력·카메라·거리 켜고 끄기) |
+| `seating.py` | 착석 구간 (자리 비움 5초, 정상/비정상/unknown) |
+| `../sensors/power.py` | 센서 전원 인터페이스 `Switchable` (실제 센서 클래스가 구현) + mock용 `SimulatedSwitch` |
+| `check_seating.py`, `check_session.py` | 확인 도구 (가상 시각으로 시나리오·API 흐름 시험) |
 | `openapi.yaml` | API 명세 (자동 생성 — 직접 고치지 않기). 안드로이드 Retrofit 코드 생성 등에 사용 |
 
 ## 실행
@@ -33,8 +39,10 @@ python -m hardware.mock.generator --scenario demo --distance-sensor hc-sr04
 python main.py --mode replay --file data/synthetic/mock_demo.csv
 
 # mock 서버
-python -m hardware.server.mock_server                    # demo 시나리오 반복, 포트 8000
-python -m hardware.server.mock_server --scenario forward_head --no-loop
+python -m hardware.server.mock_server --autostart        # 바로 demo 재생 (PC 시계로 동기화 + 세션 시작), 포트 8000
+python -m hardware.server.mock_server                    # 실제처럼: 앱이 /time/sync → /session/start를 보내야 시작
+python -m hardware.server.mock_server --scenario forward_head --no-loop --autostart
+python -m hardware.server.check_session                  # 시각·세션·센서 전원 흐름 확인 (41개)
 python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 뒤 openapi.yaml 다시 만들기
 ```
 
@@ -56,6 +64,10 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 | POST | `/calibrate` | 기준 자세 다시 측정 (10초 동안 바른 자세) |
 | GET | `/seating` | 지금 착석 구간 (자리 비움 5초 규칙), 지금 순간 normal / abnormal / unknown |
 | GET | `/seating/segments?hours=24` | 끝난 착석 구간 (시작·끝·종료 사유·첫 비정상까지 초·정상/비정상/unknown 초) |
+| POST | `/time/sync` | 앱 시각·시간대 보내기 `{"app_time": 1791207600.1, "timezone": "Asia/Seoul"}` |
+| GET | `/time` | 동기화 상태, `boot_id` (바뀌었거나 `synced=false`면 다시 동기화) |
+| GET | `/session` | 세션 상태·경과 시간·착석 시간·센서 전원 |
+| POST | `/session/start` · `/pause` · `/resume` · `/stop` | 측정 시작·일시정지·재개·정지 |
 | GET | `/mock/scenarios` | **mock 전용.** 시나리오 목록 |
 | POST | `/mock/scenario` | **mock 전용.** 시나리오 바꾸기 `{"name": "forward_head", "loop": true}` |
 
@@ -80,6 +92,33 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 - `/current`의 `seated`·`sitting_since`는 예전처럼 3초 필터를 따른다 (형식 유지). **착석 시간은 `/seating` 기준으로 쓴다.**
 - 끝난 구간은 지금은 서버 메모리에만 있다 (재시작하면 사라짐). DB 저장·자정 처리·앱 시각 동기화는 다음 단계.
 - 확인: `python -m hardware.server.check_seating` (22개 시나리오 × 8·6채널, 정답과 비교)
+
+### 시각 동기화 · 세션 · 센서 전원
+
+- **시각:** Pi OS 시계는 바꾸지 않는다. `POST /time/sync`를 받으면 '앱 시각 − Pi 단조시계' 차이만 저장하고,
+  모든 기록 시각(`/current`, `/history`, `/seating` …)을 앱 기준으로 찍는다. 차이는 메모리에만 있어서
+  서버가 다시 켜지면(재부팅 포함) 사라지고 `boot_id`가 바뀐다 → 앱은 연결할 때·세션 시작 전마다 보낸다.
+- **세션:** 동기화 전에는 시작을 거절한다 (`409 CLOCK_NOT_SYNCED`). 기록·판단은 `running`일 때만.
+  `elapsed_sec`·`seated_sec`에서 일시정지 시간은 빠진다. 일시정지하면 그때 착석 구간이 끝난다 (`end_reason: pause`).
+- **오류:** `{"detail": {"code", "message", "resync_required", "boot_id"}}`. 앱은 `code`로 처리한다.
+
+| code | HTTP | 언제 |
+|---|---|---|
+| `CLOCK_NOT_SYNCED` | 409 | 동기화 전에 세션 시작 |
+| `SESSION_ACTIVE` | 409 | 세션이 있는데 또 시작 |
+| `NOT_RUNNING` | 409 | 실행 중이 아닌데 일시정지 / 기준 자세 측정 |
+| `NOT_PAUSED` | 409 | 일시정지가 아닌데 재개 |
+| `NO_SESSION` | 409 | 세션이 없는데 정지 |
+| `INVALID_TIME` / `INVALID_TIMEZONE` | 422 | 잘못된 시각(2024년 이전 등) / 시간대 |
+
+| 상황 | 압력 | 카메라·거리 |
+|---|---|---|
+| 세션 없음 / 정지 | 끔 | 끔 (앉아도 자동으로 다시 시작 안 함) |
+| 실행 중, 착석 구간 안 (5초 미만 비움 포함) | 켬 | 켬 |
+| 실행 중, 자리 비움 5초 / 아직 안 앉음 | 켬 | 끔 → 압력 1초 확인(새 구간)되면 켬, 카메라는 약 2초 `warming` |
+| 일시정지 | 켬 (기록·판단 안 함, `seated_now`만) | 끔 |
+
+- `--autostart` 없이 켜면 앱이 동기화·시작을 보내기 전까지 `/current`는 404 (기록 없음).
 
 ### `/current`의 판단 필드 ← AI 엔진 근거
 
@@ -124,4 +163,6 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 ## 나중에 바꿀 곳
 
 - **AI 엔진이 합쳐지면:** `mock_engine.py`의 `judge_upper()` / `judge_seat()` 대신 AI 판단 결과를 넣는다 (응답 형식은 그대로)
-- **실제 센서가 오면:** `ScenarioPlayer` 대신 `SensorHub.read()`를 쓰는 real 모드 서버를 추가
+- **실제 센서가 오면:** `ScenarioPlayer` 대신 실제 센서로 읽는 real 모드 서버를 추가. 센서 클래스는
+  `../sensors/power.py`의 `Switchable`을 구현하고, 꺼진 센서는 읽지 않는 hub(`common`의 `SensorHub`를 감싸기)를 만든다.
+  센서 값은 Pi 시각으로 찍히므로 읽은 직후 `clock.stamp(sample)`로 앱 시각으로 바꾼다

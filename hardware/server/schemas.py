@@ -187,6 +187,74 @@ class SeatingSegments(BaseModel):
     items: list[SeatingSegment]
 
 
+class ErrorDetail(BaseModel):
+    code: str = Field(..., description="앱이 처리할 오류 코드 (CLOCK_NOT_SYNCED, SESSION_ACTIVE, NOT_RUNNING, "
+                                       "NOT_PAUSED, NO_SESSION, INVALID_TIME, INVALID_TIMEZONE)")
+    message: str = Field(..., description="개발자용 설명 (앱 화면 문구는 앱이 만든다)")
+    resync_required: bool = Field(..., description="true면 POST /time/sync를 다시 보내야 함")
+    boot_id: str = Field(..., description="서버가 켜질 때마다 바뀌는 값. 앱이 기억한 값과 다르면 재시작된 것")
+
+
+class ErrorResponse(BaseModel):
+    """오류 응답 (409 상태 충돌, 422 잘못된 값)"""
+    detail: ErrorDetail
+
+
+class TimeSync(BaseModel):
+    """앱 → Pi: 현재 시각과 시간대. 연결할 때와 세션 시작 전마다 보낸다"""
+    app_time: float = Field(..., description="앱의 현재 시각 (time.time()과 같은 초, 소수 가능)",
+                            examples=[1791207600.123])
+    timezone: str = Field("Asia/Seoul", description="시간대 이름 (IANA)", examples=["Asia/Seoul"])
+
+
+class TimeStatus(BaseModel):
+    """Pi의 시각 동기화 상태. Pi OS 시계는 바꾸지 않고 '앱 시각 − Pi 단조시계' 차이만 저장"""
+    synced: bool = Field(..., description="이 서버가 켜진 뒤 동기화했는지")
+    boot_id: str = Field(..., description="서버가 켜질 때마다(재부팅 포함) 바뀜. 바뀌었으면 다시 동기화")
+    timezone: str | None = None
+    app_time: float | None = Field(None, description="앱 기준 지금 시각. 동기화 전이면 null")
+    local_time: str | None = Field(None, description="app_time을 시간대로 바꾼 ISO 문자열 (확인용)")
+    synced_at: float | None = Field(None, description="마지막 동기화 때 앱이 보낸 시각")
+    resync_required: bool = Field(..., description="true면 POST /time/sync 필요")
+    offset_change_sec: float | None = Field(
+        None, description="다시 동기화했을 때 시각이 바뀐 양 (초). 첫 동기화·조회에서는 null")
+    message: str | None = None
+
+
+class SensorPower(str, Enum):
+    on = "on"
+    off = "off"
+    warming = "warming"
+
+
+class SessionSensors(BaseModel):
+    """센서 전원 (자리 비움 5초면 카메라·거리 끔, 일시정지면 압력만, 정지면 모두 끔)"""
+    pressure: SensorPower
+    camera: SensorPower = Field(..., description="warming = 켰지만 아직 사람을 찾기 전 (약 2초)")
+    distance: SensorPower
+
+
+class SessionState(str, Enum):
+    idle = "idle"
+    running = "running"
+    paused = "paused"
+
+
+class SessionStatus(BaseModel):
+    """측정 세션 상태 — 홈 하단 측정 바"""
+    state: SessionState = Field(..., description="idle 세션 없음 / running 측정 중 / paused 일시정지")
+    session_id: str | None = Field(None, description="마지막(또는 지금) 세션 ID. 한 번도 안 했으면 null")
+    started_at: float | None = None
+    ended_at: float | None = Field(None, description="정지한 시각. 진행 중이면 null")
+    elapsed_sec: float | None = Field(None, description="경과 시간 (일시정지 시간 제외)")
+    paused_sec: float | None = Field(None, description="일시정지한 시간 합")
+    seated_sec: float | None = Field(None, description="이 세션의 착석 시간 (착석 구간 합, 일시정지 제외)")
+    seated_now: bool | None = Field(None, description="지금 압력이 있는지 (일시정지 중에도). 압력센서가 꺼져 있으면 null")
+    sensors: SessionSensors
+    clock_synced: bool
+    boot_id: str
+
+
 class ScenarioStep(BaseModel):
     seconds: float
     phase: str

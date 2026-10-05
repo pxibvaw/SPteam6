@@ -16,6 +16,7 @@
     - empty_off_sec(5초) 미만: 카메라·거리 켜짐 → 사람 못 찾음(pose_detected=0), 거리는 뒤쪽 벽
     - empty_off_sec 이상: 착석 구간 종료, 카메라·거리 꺼짐 → cam_ts 빈칸, distance_mm 빈칸·status -1
     - 다시 앉으면 켜지고, 카메라는 CAMERA_WARMUP_SEC 동안 사람을 못 찾음(pose_detected=0)
+    - mock 서버에서는 정답 라벨 대신 서버 전원 정책(set_sensor_power)을 따른다
 
 사용 예:
     python -m hardware.mock.generator --list                 # 시나리오 목록
@@ -87,6 +88,7 @@ class ScenarioPlayer:
 
         self.t0: float | None = None
         self._override: tuple[Step, float] | None = None   # (Step, 끝 시각) — 기준 다시 측정 중
+        self._external_power = False            # True면 카메라·거리 전원을 서버가 정함
         self._reset_state()
 
     def _reset_state(self) -> None:
@@ -123,8 +125,19 @@ class ScenarioPlayer:
     def camera_warming(self, ts: float) -> bool:
         return self._cam_on_at is not None and ts - self._cam_on_at < CAMERA_WARMUP_SEC
 
+    def set_sensor_power(self, on: bool, ts: float) -> None:
+        """카메라·거리 전원을 밖(서버 전원 정책)에서 정한다. 한 번 부르면 정답 기준 자동 끄기는 안 씀"""
+        self._external_power = True
+        if on and not self.sensors_on:
+            self._cam_on_at = ts                       # 다시 켬 → 카메라 켜는 중
+        if on != self.sensors_on:
+            self._last_pose = None
+        self.sensors_on = on
+
     def _update_power(self, ts: float, empty: bool) -> None:
-        """자리 비움 시간에 따라 카메라·거리센서를 끄고 켠다"""
+        """자리 비움 시간에 따라 카메라·거리센서를 끄고 켠다 (정답 라벨 기준, CSV 만들 때)"""
+        if self._external_power:
+            return
         if empty:
             if self._empty_since is None:
                 self._empty_since = ts

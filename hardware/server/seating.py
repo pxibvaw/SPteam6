@@ -39,7 +39,8 @@ class PostureStatus(str, Enum):
 
 class EndReason(str, Enum):
     AWAY = "away"           # 자리 비움 5초
-    STOP = "stop"           # 정지 버튼 (세션 API가 생기면 사용)
+    STOP = "stop"           # 세션 정지
+    PAUSE = "pause"         # 세션 일시정지 (재개 후 앉아 있으면 새 구간)
 
 
 def is_empty(values) -> bool:
@@ -143,9 +144,17 @@ class SeatingTracker:
             self._end(ts - self.end_sec, EndReason.AWAY, ts)
 
     def stop(self, ts: float) -> None:
-        """정지 버튼: 지금 시각으로 구간 종료"""
+        """세션 정지: 지금 시각으로 구간 종료"""
         if self.current is not None:
             self._end(ts, EndReason.STOP, ts)
+        self._away_since = self._sit_since = None
+
+    def pause(self, ts: float) -> None:
+        """세션 일시정지: 지금 시각으로 구간 종료. 일시정지 동안은 update()를 부르지 않는다"""
+        if self.current is not None:
+            self._end(ts, EndReason.PAUSE, ts)
+        self._away_since = self._sit_since = None
+        self.status = self.dominant = None
 
     def _end(self, end: float, reason: EndReason, ts: float) -> None:
         seg = self.current

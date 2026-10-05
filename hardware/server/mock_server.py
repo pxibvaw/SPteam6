@@ -4,9 +4,14 @@
 가짜 판단 엔진(mock_engine.py) 결과를 앱에 준다. 응답 형식은 schemas.py → openapi.yaml.
 영상 이미지는 만들지도, 보내지도 않는다 (카메라 좌표 숫자만).
 
+실제 기기와 같은 흐름: 앱이 POST /time/sync(시각 동기화) → POST /session/start(측정 시작)를
+보내야 시나리오가 재생되고 기록된다. 기록 시각은 모두 앱 기준 시각.
+    --autostart를 주면 서버가 켜지자마자 PC 시계로 동기화하고 세션을 시작한다 (예전처럼 바로 데이터)
+
 실행 (저장소 최상위):
-    python -m hardware.server.mock_server                       # demo 시나리오 반복, 포트 8000
-    python -m hardware.server.mock_server --scenario forward_head --no-loop
+    python -m hardware.server.mock_server                       # 동기화·시작을 기다림, 포트 8000
+    python -m hardware.server.mock_server --autostart           # 바로 demo 재생
+    python -m hardware.server.mock_server --scenario forward_head --no-loop --autostart
     python -m hardware.server.mock_server --export-openapi      # openapi.yaml 다시 만들기
 
 같은 Wi-Fi의 폰에서: http://<노트북 IP>:8000/current
@@ -19,6 +24,7 @@ import logging
 import socket
 import sys
 import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -26,68 +32,168 @@ import yaml
 from fastapi import FastAPI, HTTPException, Query
 
 from common.config import ConfigError, load_config
-from common.sensors_base import SampleSkipped, now
+from common.sensors_base import SampleSkipped
 from hardware.mock.generator import ScenarioPlayer
 from hardware.mock.scenarios import SCENARIOS, Scenario, Step, get_scenario
+from hardware.server.clock import AppClock, ClockError
 from hardware.server.mock_engine import MockEngine
+from hardware.server.power import PowerPolicy
 from hardware.server.schemas import (
-    API_VERSION, Baseline, CalibrateResult, Current, History, ScenarioInfo, ScenarioSelect, Seating,
-    SeatingSegments, Status,
+    API_VERSION, Baseline, CalibrateResult, Current, ErrorResponse, History, ScenarioInfo,
+    ScenarioSelect, Seating, SeatingSegments, SessionStatus, Status, TimeStatus, TimeSync,
 )
+from hardware.server.seating import is_empty
+from hardware.server.session import SessionController, SessionError, SessionState
 
 log = logging.getLogger("sitsense.server")
 OPENAPI_PATH = Path(__file__).with_name("openapi.yaml")
 
 
 class MockRuntime:
-    """시나리오 재생 + 가짜 판단을 백그라운드에서 10Hz로 돌린다"""
+    """시나리오 재생 + 가짜 판단을 백그라운드에서 10Hz로 돌린다.
 
-    def __init__(self, cfg: dict, scenario: str = "demo", loop: bool = True, seed: int | None = None):
+    세션 상태(session.py)와 착석 구간을 보고 센서 전원(power.py)을 정하고,
+    켜진 센서만 읽는다. 기록·판단은 세션이 running일 때만 한다.
+    """
+
+    def __init__(self, cfg: dict, scenario: str = "demo", loop: bool = True, seed: int | None = None,
+                 clock: AppClock | None = None):
         self.cfg = cfg
         self.period = 1.0 / cfg["sampling"]["hz"]
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self.clock = clock or AppClock()
+        self.session = SessionController()
+        self.power = PowerPolicy()
+        self.seated_now: bool | None = None     # 지금 압력이 있는지 (압력센서가 꺼져 있으면 None)
         self.select(scenario, loop, seed)
 
+    def now(self) -> float:
+        """앱 기준 지금 시각 (동기화 전에는 Pi 시각 — 그때는 기록이 없다)"""
+        return self.clock.now_or_pi()
+
     def select(self, name: str, loop: bool = True, seed: int | None = None) -> Scenario:
+        """시나리오 바꾸기. 세션 중이면 기준 자세부터 다시 (착석 구간 기록은 이어감)"""
         scenario = get_scenario(name)
         with self.lock:
-            self.scenario, self.loop = scenario, loop
+            old = getattr(self, "engine", None)
+            self.scenario, self.loop, self.seed = scenario, loop, seed
             self.player = ScenarioPlayer(self.cfg, scenario, seed=seed, loop=loop)
-            self.engine = MockEngine(self.cfg, seed=seed)    # 새 시나리오 = 기준 자세부터 다시
-            self.player.start()
+            self.engine = MockEngine(self.cfg, seed=seed)
+            if old is not None:
+                self.engine.seating = old.seating
+            if self.session.state is not SessionState.IDLE:
+                self.player.start(self.now())
         log.info("시나리오: %s (%s, %.0f초, %s)", name, scenario.description, scenario.total_sec,
                  "반복" if loop else "한 번")
         return scenario
 
-    def tick(self) -> None:
-        ts = now()
+    # --- 세션 ---------------------------------------------------------------
+    def start_session(self) -> None:
         with self.lock:
+            ts = self.clock.now()
+            if ts is None:
+                raise SessionError("CLOCK_NOT_SYNCED",
+                                   "시각 동기화 전이라 세션을 시작할 수 없음. POST /time/sync를 먼저 보내세요")
+            self.session.start(ts, "s_" + self.clock.local(ts).strftime("%Y%m%d_%H%M%S"))
+            self.player = ScenarioPlayer(self.cfg, self.scenario, seed=self.seed, loop=self.loop)
+            self.player.start(ts)                       # 시나리오도 처음(기준 자세)부터
+            self.engine = MockEngine(self.cfg, seed=self.seed)
+            self.power.apply(ts, SessionState.RUNNING.value, in_segment=False)
+        log.info("세션 시작: %s", self.session.session_id)
+
+    def pause_session(self) -> None:
+        with self.lock:
+            ts = self.clock.now()
+            self.session.pause(ts)
+            self.engine.seating.pause(ts)               # 착석 구간은 여기서 끝 (end_reason=pause)
+            self.power.apply(ts, SessionState.PAUSED.value, in_segment=False)
+        log.info("세션 일시정지")
+
+    def resume_session(self) -> None:
+        with self.lock:
+            ts = self.clock.now()
+            self.session.resume(ts)
+            self.power.apply(ts, SessionState.RUNNING.value, in_segment=False)
+        log.info("세션 재개")
+
+    def stop_session(self) -> None:
+        with self.lock:
+            ts = self.clock.now()
+            self.session.stop(ts)
+            self.engine.seating.stop(ts)
+            self.power.apply(ts, SessionState.IDLE.value, in_segment=False)
+            self.seated_now = None
+        log.info("세션 정지: %s", self.session.session_id)
+
+    def session_snapshot(self) -> dict:
+        with self.lock:
+            ts = self.now()
+            s = self.session
+            seated_sec = None
+            if s.started_at is not None:
+                tracker = self.engine.seating
+                segs = [g for g in tracker.segments if g.start >= s.started_at]
+                total = sum(g.end - g.start for g in segs)
+                if tracker.current is not None:
+                    total += ts - tracker.current.start
+                seated_sec = round(total, 1)
+            elapsed = s.elapsed_sec(ts)
+            return {
+                "state": s.state.value,
+                "session_id": s.session_id,
+                "started_at": s.started_at,
+                "ended_at": s.ended_at,
+                "elapsed_sec": None if elapsed is None else round(elapsed, 1),
+                "paused_sec": None if s.started_at is None else round(s.paused_sec(ts), 1),
+                "seated_sec": seated_sec,
+                "seated_now": self.seated_now,
+                "sensors": self.power.states(ts),
+                "clock_synced": self.clock.synced,
+                "boot_id": self.clock.boot_id,
+            }
+
+    # --- 매 순간 --------------------------------------------------------------
+    def tick(self) -> None:
+        with self.lock:
+            ts = self.clock.now()
+            if ts is None:
+                return                                  # 동기화 전: 기록 없음
+            state = self.session.state.value
+            self.power.apply(ts, state, in_segment=self.engine.seating.current is not None)
+            if not self.power.is_on("pressure"):
+                self.seated_now = None
+                return                                  # 세션 없음·정지: 아무것도 읽지 않음
             if self.player.finished(ts):
-                return                             # 한 번만 재생: 끝나면 기록이 멈춤 (앱은 '연결 끊김' 확인 가능)
+                return                                  # 한 번만 재생: 끝나면 기록이 멈춤
+            self.player.set_sensor_power(self.power.is_on("camera"), ts)
             _, step = self.player.current(ts)
             try:
                 sample = self.player.read(ts)
             except SampleSkipped:
                 return
-            self.engine.update(sample, step)
+            self.seated_now = not is_empty(sample.pressure.values)
+            if state == SessionState.RUNNING.value:     # 일시정지: 압력만 보고 기록·판단 안 함
+                self.engine.update(sample, step)
 
     def calibrate(self) -> float:
         with self.lock:
-            ts = now()
+            if self.session.state is not SessionState.RUNNING:
+                raise SessionError("NOT_RUNNING", "측정 중일 때만 기준 자세를 다시 잴 수 있음")
+            ts = self.clock.now()
             seconds = self.engine.start_baseline(ts)
             self.player.hold(Step(seconds), ts + seconds)    # 측정하는 동안 바른 자세로 앉음
             return seconds
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            t0 = now()
+            t0 = time.monotonic()
             try:
                 self.tick()
             except Exception:  # noqa: BLE001 — 한 순간 오류로 서버가 멈추지 않게
                 log.exception("mock 데이터 생성 오류")
-            self._stop.wait(max(0.0, self.period - (now() - t0)))
+            self._stop.wait(max(0.0, self.period - (time.monotonic() - t0)))
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name="mock-runtime", daemon=True)
@@ -105,8 +211,28 @@ def scenario_info(s: Scenario) -> dict:
                        "tilt": st.tilt, "faults": st.faults} for st in s.steps]}
 
 
-def create_app(cfg: dict, scenario: str = "demo", loop: bool = True, seed: int | None = None) -> FastAPI:
-    runtime = MockRuntime(cfg, scenario, loop, seed)
+ERRORS = {409: {"model": ErrorResponse, "description": "지금 상태에서 할 수 없음 (detail.code 참고)"},
+          422: {"model": ErrorResponse, "description": "잘못된 값 (detail.code 참고)"}}
+
+
+def create_app(cfg: dict, scenario: str = "demo", loop: bool = True, seed: int | None = None,
+               *, clock: AppClock | None = None, autostart: bool = False) -> FastAPI:
+    runtime = MockRuntime(cfg, scenario, loop, seed, clock=clock)
+    if autostart:                                   # 예전처럼 바로 데이터: PC 시계로 동기화 + 세션 시작
+        runtime.clock.sync(time.time(), "Asia/Seoul")
+        runtime.start_session()
+
+    def fail(status: int, code: str, message: str):
+        raise HTTPException(status, detail={"code": code, "message": message,
+                                            "resync_required": not runtime.clock.synced,
+                                            "boot_id": runtime.clock.boot_id})
+
+    def session_call(fn) -> dict:
+        try:
+            fn()
+        except SessionError as e:
+            fail(409, e.code, str(e))
+        return runtime.session_snapshot()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -127,7 +253,7 @@ def create_app(cfg: dict, scenario: str = "demo", loop: bool = True, seed: int |
 
     @app.get("/status", response_model=Status, tags=["기기"], summary="서버·센서 상태")
     def status():
-        ts = now()
+        ts = runtime.now()
         with runtime.lock:
             e = runtime.engine
             latest = e.latest
@@ -143,7 +269,8 @@ def create_app(cfg: dict, scenario: str = "demo", loop: bool = True, seed: int |
                     "camera": {"ok": e.sensor_ok("camera", ts), "detail": "Pi Camera V2"},
                 },
                 "scenario": runtime.scenario.name,
-                "scenario_elapsed_sec": round(runtime.player.elapsed(ts), 1),
+                "scenario_elapsed_sec": (None if runtime.player.t0 is None
+                                         else round(runtime.player.elapsed(ts), 1)),
                 "scenario_total_sec": runtime.scenario.total_sec,
             }
 
@@ -160,13 +287,13 @@ def create_app(cfg: dict, scenario: str = "demo", loop: bool = True, seed: int |
     def history(seconds: int = Query(60, ge=1, le=3600, description="최근 몇 초")):
         with runtime.lock:
             items = list(runtime.engine.history)
-        cutoff = now() - seconds
+        cutoff = runtime.now() - seconds
         return {"seconds": seconds, "items": [i for i in items if i["ts"] >= cutoff]}
 
     @app.get("/seating", response_model=Seating, tags=["착석"],
              summary="지금 착석 구간 (자리 비움 5초 규칙, 정상/비정상/unknown)")
     def seating():
-        ts = now()
+        ts = runtime.now()
         with runtime.lock:
             return runtime.engine.seating.snapshot(ts)
 
@@ -174,12 +301,12 @@ def create_app(cfg: dict, scenario: str = "demo", loop: bool = True, seed: int |
              summary="끝난 착석 구간 목록")
     def seating_segments(hours: int = Query(24, ge=1, le=48, description="최근 몇 시간 안에 끝난 구간")):
         with runtime.lock:
-            items = runtime.engine.seating.finished(since_ts=now() - hours * 3600)
+            items = runtime.engine.seating.finished(since_ts=runtime.now() - hours * 3600)
         return {"hours": hours, "items": items}
 
     @app.get("/baseline", response_model=Baseline, tags=["기준 자세"], summary="기준(바른) 자세 측정값")
     def baseline():
-        ts = now()
+        ts = runtime.now()
         with runtime.lock:
             e = runtime.engine
             b = e.baseline
@@ -191,9 +318,51 @@ def create_app(cfg: dict, scenario: str = "demo", loop: bool = True, seed: int |
             return out
 
     @app.post("/calibrate", response_model=CalibrateResult, tags=["기준 자세"],
-              summary="기준 자세 다시 측정 (그동안 바른 자세로 앉기)")
+              summary="기준 자세 다시 측정 (그동안 바른 자세로 앉기). 측정 중일 때만", responses=ERRORS)
     def calibrate():
-        return {"started": True, "seconds": runtime.calibrate()}
+        try:
+            return {"started": True, "seconds": runtime.calibrate()}
+        except SessionError as e:
+            fail(409, e.code, str(e))
+
+    @app.post("/time/sync", response_model=TimeStatus, tags=["시각"], responses=ERRORS,
+              summary="앱 시각·시간대 보내기 (연결할 때, 세션 시작 전마다)")
+    def time_sync(req: TimeSync):
+        try:
+            with runtime.lock:
+                change = runtime.clock.sync(req.app_time, req.timezone)
+        except ClockError as e:
+            fail(422, e.code, str(e))
+        return {**runtime.clock.snapshot(), **change}
+
+    @app.get("/time", response_model=TimeStatus, tags=["시각"],
+             summary="시각 동기화 상태 (boot_id가 바뀌었거나 synced=false면 다시 동기화)")
+    def time_status():
+        return runtime.clock.snapshot()
+
+    @app.get("/session", response_model=SessionStatus, tags=["세션"], summary="세션 상태·경과 시간·센서 전원")
+    def session_status():
+        return runtime.session_snapshot()
+
+    @app.post("/session/start", response_model=SessionStatus, tags=["세션"], responses=ERRORS,
+              summary="측정 시작 (시각 동기화 후에만). 기준 자세 측정부터")
+    def session_start():
+        return session_call(runtime.start_session)
+
+    @app.post("/session/pause", response_model=SessionStatus, tags=["세션"], responses=ERRORS,
+              summary="일시정지: 기록·판단 멈춤, 카메라·거리 끔 (착석 구간은 여기서 끝)")
+    def session_pause():
+        return session_call(runtime.pause_session)
+
+    @app.post("/session/resume", response_model=SessionStatus, tags=["세션"], responses=ERRORS,
+              summary="재개")
+    def session_resume():
+        return session_call(runtime.resume_session)
+
+    @app.post("/session/stop", response_model=SessionStatus, tags=["세션"], responses=ERRORS,
+              summary="정지: 세션 끝, 센서 모두 끔 (앉아도 자동으로 다시 시작하지 않음)")
+    def session_stop():
+        return session_call(runtime.stop_session)
 
     @app.get("/mock/scenarios", response_model=list[ScenarioInfo], tags=["mock 전용"],
              summary="시나리오 목록")
@@ -238,6 +407,8 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--host", default="0.0.0.0", help="0.0.0.0 = 같은 Wi-Fi의 폰에서도 접속 가능")
     ap.add_argument("--port", type=int, default=8000)
+    ap.add_argument("--autostart", action="store_true",
+                    help="켜자마자 PC 시계로 시각 동기화 + 세션 시작 (앱 없이 바로 데이터 보기)")
     ap.add_argument("--export-openapi", action="store_true", help=f"{OPENAPI_PATH.name}만 만들고 종료")
     args = ap.parse_args()
 
@@ -251,7 +422,9 @@ def main() -> int:
         return 0
 
     import uvicorn
-    app = create_app(cfg, args.scenario, loop=not args.no_loop, seed=args.seed)
+    app = create_app(cfg, args.scenario, loop=not args.no_loop, seed=args.seed, autostart=args.autostart)
+    if not args.autostart:
+        log.info("앱이 POST /time/sync → POST /session/start를 보내면 측정을 시작함 (바로 보려면 --autostart)")
     log.info("폰에서 접속: http://%s:%d/current   (API 문서: http://localhost:%d/docs)",
              lan_ip(), args.port, args.port)
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
