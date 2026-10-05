@@ -661,8 +661,8 @@ components:
         code:
           type: string
           title: Code
-          description: 앱이 처리할 오류 코드 (CLOCK_NOT_SYNCED, SESSION_ACTIVE, NOT_RUNNING,
-            NOT_PAUSED, NO_SESSION, INVALID_TIME, INVALID_TIMEZONE)
+          description: 앱이 처리할 오류 코드 (CLOCK_NOT_SYNCED, CLOCK_BACKWARD, CLOCK_JUMP_IN_SESSION,
+            SESSION_ACTIVE, NOT_RUNNING, NOT_PAUSED, NO_SESSION, INVALID_TIME, INVALID_TIMEZONE)
         message:
           type: string
           title: Message
@@ -1216,6 +1216,12 @@ components:
           - type: 'null'
           title: Offset Change Sec
           description: 다시 동기화했을 때 시각이 바뀐 양 (초). 첫 동기화·조회에서는 null
+        applied:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Applied
+          description: 이번 동기화를 적용했는지. 0.5초 이내로 뒤로 가는 변경은 false(시각 그대로). 조회에서는 null
         message:
           anyOf:
           - type: string
@@ -1239,7 +1245,7 @@ components:
         timezone:
           type: string
           title: Timezone
-          description: 시간대 이름 (IANA)
+          description: 시간대 (Asia/Seoul만 가능)
           default: Asia/Seoul
           examples:
           - Asia/Seoul

@@ -330,9 +330,10 @@ def create_app(cfg: dict, scenario: str = "demo", loop: bool = True, seed: int |
     def time_sync(req: TimeSync):
         try:
             with runtime.lock:
-                change = runtime.clock.sync(req.app_time, req.timezone)
+                in_session = runtime.session.state is not SessionState.IDLE
+                change = runtime.clock.sync(req.app_time, req.timezone, in_session=in_session)
         except ClockError as e:
-            fail(422, e.code, str(e))
+            fail(e.status, e.code, str(e))
         return {**runtime.clock.snapshot(), **change}
 
     @app.get("/time", response_model=TimeStatus, tags=["시각"],

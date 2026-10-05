@@ -188,8 +188,9 @@ class SeatingSegments(BaseModel):
 
 
 class ErrorDetail(BaseModel):
-    code: str = Field(..., description="앱이 처리할 오류 코드 (CLOCK_NOT_SYNCED, SESSION_ACTIVE, NOT_RUNNING, "
-                                       "NOT_PAUSED, NO_SESSION, INVALID_TIME, INVALID_TIMEZONE)")
+    code: str = Field(..., description="앱이 처리할 오류 코드 (CLOCK_NOT_SYNCED, CLOCK_BACKWARD, "
+                                       "CLOCK_JUMP_IN_SESSION, SESSION_ACTIVE, NOT_RUNNING, NOT_PAUSED, "
+                                       "NO_SESSION, INVALID_TIME, INVALID_TIMEZONE)")
     message: str = Field(..., description="개발자용 설명 (앱 화면 문구는 앱이 만든다)")
     resync_required: bool = Field(..., description="true면 POST /time/sync를 다시 보내야 함")
     boot_id: str = Field(..., description="서버가 켜질 때마다 바뀌는 값. 앱이 기억한 값과 다르면 재시작된 것")
@@ -204,7 +205,7 @@ class TimeSync(BaseModel):
     """앱 → Pi: 현재 시각과 시간대. 연결할 때와 세션 시작 전마다 보낸다"""
     app_time: float = Field(..., description="앱의 현재 시각 (time.time()과 같은 초, 소수 가능)",
                             examples=[1791207600.123])
-    timezone: str = Field("Asia/Seoul", description="시간대 이름 (IANA)", examples=["Asia/Seoul"])
+    timezone: str = Field("Asia/Seoul", description="시간대 (Asia/Seoul만 가능)", examples=["Asia/Seoul"])
 
 
 class TimeStatus(BaseModel):
@@ -218,6 +219,8 @@ class TimeStatus(BaseModel):
     resync_required: bool = Field(..., description="true면 POST /time/sync 필요")
     offset_change_sec: float | None = Field(
         None, description="다시 동기화했을 때 시각이 바뀐 양 (초). 첫 동기화·조회에서는 null")
+    applied: bool | None = Field(
+        None, description="이번 동기화를 적용했는지. 0.5초 이내로 뒤로 가는 변경은 false(시각 그대로). 조회에서는 null")
     message: str | None = None
 
 

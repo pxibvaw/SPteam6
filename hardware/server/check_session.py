@@ -190,12 +190,35 @@ def main() -> int:
           f"{j['state']}, seated_now={j['seated_now']}")
     check("정지 후 또 정지 → 거절", code(c.post("/session/stop")) == "409 NO_SESSION", code(c.post("/session/stop")))
 
-    print("\n7) 세션 중 다시 동기화 (앱 시각이 3초 앞으로)")
+    print("\n7) 다시 동기화 규칙 (뒤로 0.5초 이내 → 적용 안 함, 넘으면 거절 / 세션 중 +2초 넘게 → 거절)")
+
+    def resync(delta: float):
+        """지금 앱 시각 + delta로 다시 동기화 → (응답, 그 뒤 시각이 delta만큼 바뀌었는지 확인용 값)"""
+        before = c.get("/time").json()["app_time"]
+        r = c.post("/time/sync", json={"app_time": before + delta, "timezone": "Asia/Seoul"})
+        return r, round(c.get("/time").json()["app_time"] - before, 3)
+
     c.post("/session/start")
     run_to(85)
-    r = c.post("/time/sync", json={"app_time": c.get("/time").json()["app_time"] + 3, "timezone": "Asia/Seoul"})
-    check("offset_change_sec ≈ 3", abs(r.json()["offset_change_sec"] - 3) < 0.01, r.json()["offset_change_sec"])
+    r, moved = resync(3)
+    check("세션 중 +3초 → 거절, 시각 그대로", code(r) == "409 CLOCK_JUMP_IN_SESSION" and moved == 0,
+          f"{code(r)}, 바뀐 양 {moved}")
+    r, moved = resync(1.5)
+    check("세션 중 +1.5초 → 적용", r.status_code == 200 and r.json()["applied"] and moved == 1.5,
+          f"applied={r.json().get('applied')}, 바뀐 양 {moved}")
+    r, moved = resync(-0.3)
+    check("세션 중 −0.3초 → 적용 안 함 (200)", r.status_code == 200 and r.json()["applied"] is False
+          and moved == 0, f"applied={r.json().get('applied')}, 바뀐 양 {moved}")
+    r, moved = resync(-1)
+    check("세션 중 −1초 → 거절", code(r) == "409 CLOCK_BACKWARD" and moved == 0, f"{code(r)}, 바뀐 양 {moved}")
     c.post("/session/stop")
+    r, moved = resync(10)
+    check("세션 밖 +10초 → 적용", r.status_code == 200 and r.json()["applied"] and moved == 10,
+          f"applied={r.json().get('applied')}, 바뀐 양 {moved}")
+    r, moved = resync(-5)
+    check("세션 밖 −5초 → 거절", code(r) == "409 CLOCK_BACKWARD" and moved == 0, f"{code(r)}, 바뀐 양 {moved}")
+    r = c.post("/time/sync", json={"app_time": c.get("/time").json()["app_time"], "timezone": "America/New_York"})
+    check("Asia/Seoul이 아닌 시간대 → 거절", code(r) == "422 INVALID_TIMEZONE", code(r))
 
     print("\n8) 서버 재시작 (재부팅 흉내)")
     old_boot = c.get("/time").json()["boot_id"]

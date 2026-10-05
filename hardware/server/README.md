@@ -105,11 +105,13 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 | code | HTTP | 언제 |
 |---|---|---|
 | `CLOCK_NOT_SYNCED` | 409 | 동기화 전에 세션 시작 |
+| `CLOCK_BACKWARD` | 409 | 다시 동기화했는데 시각이 0.5초 넘게 뒤로 감 (0.5초 이내는 200 `applied: false`, 시각 그대로) |
+| `CLOCK_JUMP_IN_SESSION` | 409 | 측정 중 다시 동기화했는데 2초 넘게 앞으로 감 (정지한 뒤 보내면 됨) |
 | `SESSION_ACTIVE` | 409 | 세션이 있는데 또 시작 |
 | `NOT_RUNNING` | 409 | 실행 중이 아닌데 일시정지 / 기준 자세 측정 |
 | `NOT_PAUSED` | 409 | 일시정지가 아닌데 재개 |
 | `NO_SESSION` | 409 | 세션이 없는데 정지 |
-| `INVALID_TIME` / `INVALID_TIMEZONE` | 422 | 잘못된 시각(2024년 이전 등) / 시간대 |
+| `INVALID_TIME` / `INVALID_TIMEZONE` | 422 | 잘못된 시각(2024년 이전 등) / Asia/Seoul이 아닌 시간대 |
 
 | 상황 | 압력 | 카메라·거리 |
 |---|---|---|
