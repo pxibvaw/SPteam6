@@ -61,6 +61,7 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 - 시각 `time.time()` 초, 거리 mm, 각도 °, 비율 0~1. **"52cm" 같은 표시 글자는 앱이 만든다**
 - 판단할 수 없는 값은 `null` (카메라 미인식이면 `deltas`가 null, 목·기울기는 `unknown`)
 - **영상 이미지는 어떤 응답에도 없다.** 카메라는 상체 점 좌표(0~1 비율)만
+- `postures` 순서 = 대표 자세 우선순위: **거북목 > 다리 꼬기 > 체중 편향 > 기울어진 자세** (`postures[0]`이 대표)
 
 ### `/current`의 판단 필드 ← AI 엔진 근거
 
@@ -81,10 +82,13 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 
 | 종류 | 이름 |
 |---|---|
-| 자세 하나씩 | `normal` `forward_head` `tilt_left` `tilt_right` `lean_left` `lean_right` `cross_left` `cross_right` `empty` |
-| 복합 | `cross_forward` (왼다리 꼬기 + 거북목) |
-| 센서 오류 | `distance_fail` `camera_lost` `pressure_dropout` |
-| 데모 | `demo` (약 4분 30초, 여러 자세를 차례로 + 센서 오류) |
+| 자세 하나씩 (9) | `normal` `forward_head` `tilt_left` `tilt_right` `lean_left` `lean_right` `cross_left` `cross_right` `empty` |
+| 복합 (4) | `cross_forward` (거북목 + 왼다리 꼬기 → 거북목) `cross_lean` (오른다리 꼬기 + 오른쪽 편향 → 다리 꼬기) `lean_tilt` (왼쪽 편향 + 왼쪽 기울기 → 체중 편향) `all_at_once` (네 가지 동시 → 거북목) |
+| 경계 (4) | `short_blip` (3초 미만 순간 자세) `empty_4s` (구간 유지) `empty_6s` (구간 종료) `sit_stand` (앉았다 일어남 반복) |
+| 센서 오류 (4) | `distance_fail` `distance_spike` (HC-SR04 튐) `camera_lost` `pressure_dropout` |
+| 데모 (1) | `demo` (5분, 정상 위주 + 거북목·다리 꼬기·자리 비움) |
+
+총 22개. 복합 시나리오의 화살표 뒤는 대표 자세(우선순위 기준). 자세한 규칙은 [`../mock/README.md`](../mock/README.md).
 
 주의: 더미 값은 실제 자세 패턴이 아니다. 앱·서버 흐름 확인용이고 정확도 평가에 쓰면 안 된다.
 
@@ -96,7 +100,7 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 | 2 | 리포트(일간·주간) API | 아직 없음. 앱 화면 정보가 정리되면 추가 | 앱 |
 | 3 | `postures`에 기울기 포함 | `tilt_left`/`tilt_right`도 나쁜 자세로 넣음 | 전체 |
 | 4 | 3초 필터 | 서버가 주는 상태는 3초 필터를 거친 값 (`pending`에 대기 중인 변화) | AI |
-| 5 | FSR 개수 | `config.yaml`대로 8칸 | AI |
+| 5 | FSR 개수 | 수집 단계 8칸 → 실험 후 6칸 선별, **최종 6칸** (2열 × 3행). `config.yaml`은 아직 8 → 6채널 제안값은 `../mock/README.md` (공용 파일이라 팀 상의 후 변경) | AI |
 | 6 | API 문서 위치 | `hardware/server/openapi.yaml`. 확정되면 `docs/`로 옮길지 | 전체 |
 
 ## 나중에 바꿀 곳

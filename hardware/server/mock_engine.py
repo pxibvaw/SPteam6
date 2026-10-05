@@ -36,12 +36,12 @@ SENSOR_OK_SEC = 2.0             # 최근 이 시간 안에 정상 값을 읽었�
 MAX_GAP_SEC = 5.0               # 기록이 이보다 오래 끊기면 연속 착석이 끊긴 것으로 봄
 HISTORY_SEC = 3600              # 최근 판단 기록 보관 (1초에 1개)
 
-POSTURE_KEYS = {                # 앱에 보여줄 나쁜 자세 이름
+POSTURE_KEYS = {                # 앱에 보여줄 나쁜 자세 이름. 순서 = 우선순위 (postures[0]이 대표 자세)
+    ("head", "forward"): "forward_head",        # 거북목 > 다리 꼬기 > 체중 편향 > 기울어진 자세
     ("seat", "cross_left"): "cross_left",
     ("seat", "cross_right"): "cross_right",
     ("seat", "lean_left"): "lean_left",
     ("seat", "lean_right"): "lean_right",
-    ("head", "forward"): "forward_head",
     ("tilt", "left"): "tilt_left",
     ("tilt", "right"): "tilt_right",
 }
