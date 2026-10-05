@@ -1,8 +1,8 @@
 """착석 구간 — 언제부터 언제까지 앉아 있었나, 그동안 자세는 어땠나
 
 규칙
-    - 자리 비움 판단은 3초 필터와 별개로, 그 순간의 압력으로 한다 (채널 평균 < EMPTY_MEAN_ADC).
-      채널 평균이라 6채널·8채널에서 똑같이 동작한다.
+    - 자리 비움 판단은 3초 필터와 별개로, 그 순간의 압력으로 한다 (압력 합 < EMPTY_TOTAL_ADC).
+      AI 코드와 같은 기준. 합이라서 채널 수가 줄면 채널당 기준은 조금 높아진다 (8채널 6.25, 6채널 8.3)
     - 자리 비움이 EMPTY_END_SEC(5초) 이어지면 구간 종료. 종료 시각 = 판단 시각 − 5초 (마지막 5초는 착석에 안 넣음)
     - 5초 미만 자리 비움은 구간을 유지하고, 그 시간은 unknown으로 센다.
     - 구간이 없을 때 압력이 SIT_CONFIRM_SEC(1초) 이어지면 새 구간. 시작 시각 = 압력이 처음 들어온 시각
@@ -22,7 +22,9 @@ from dataclasses import asdict, dataclass
 from enum import Enum
 
 # ⚠️ 임시값 — 실물 FSR 값을 보고 조정
-EMPTY_MEAN_ADC = 8.0        # 채널 평균 압력(0~1023)이 이보다 작으면 자리 비움 (예전 기준: 8채널 합 50 ≈ 평균 6.25)
+EMPTY_TOTAL_ADC = 50.0      # 압력 합(음수는 0으로)이 이보다 작으면 자리 비움. AI 코드와 같은 값:
+                            #   ai 브랜치(3a94581) ai/features/pressure.py 11줄 center_of_pressure(min_total=50.0),
+                            #   25줄 `if total < min_total` — 실물 FSR로 빈 의자·앉았을 때를 재서 다시 맞출 것
 EMPTY_END_SEC = 5.0         # 자리 비움이 이만큼 이어지면 구간 종료 (config.yaml thresholds.empty_off_sec가 있으면 그 값)
 SIT_CONFIRM_SEC = 1.0       # 구간이 없을 때 압력이 이만큼 이어져야 새 구간 (의자를 잠깐 건드린 것과 구분)
 MAX_STEP_SEC = 1.0          # 기록 간격이 이보다 길면 이만큼만 센다 (기록이 끊긴 시간은 넣지 않음)
@@ -41,9 +43,9 @@ class EndReason(str, Enum):
 
 
 def is_empty(values) -> bool:
-    """그 순간 자리가 비었는지 (채널 수와 무관)"""
+    """그 순간 자리가 비었는지 (AI 코드 center_of_pressure와 같은 압력 합 기준)"""
     values = list(values)
-    return not values or sum(values) / len(values) < EMPTY_MEAN_ADC
+    return not values or sum(max(v, 0) for v in values) < EMPTY_TOTAL_ADC
 
 
 def classify(seat: str, head: str, tilt: str, postures: list[str]) -> tuple[PostureStatus, str]:

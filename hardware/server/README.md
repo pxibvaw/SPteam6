@@ -69,13 +69,14 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 
 | 규칙 | 값 (상수, ⚠️ 임시값은 실물로 조정) |
 |---|---|
-| 자리 비움 = 그 순간 압력 **채널 평균**이 기준 미만 (6·8채널 똑같이 동작) | `EMPTY_MEAN_ADC = 8` ⚠️ |
+| 자리 비움 = 그 순간 압력 **합**이 기준 미만 (AI 코드 `ai/features/pressure.py`의 `min_total`과 같은 값) | `EMPTY_TOTAL_ADC = 50` ⚠️ |
 | 자리 비움이 이어지면 구간 종료, **종료 시각 = 판단 시각 − 5초** | `EMPTY_END_SEC = 5` |
 | 구간 밖에서 압력이 이어지면 새 구간, **시작 = 압력이 처음 들어온 시각** | `SIT_CONFIRM_SEC = 1` ⚠️ |
 | 5초 미만 자리 비움 | 구간 유지, 그 시간은 `unknown` |
 | `normal` = 목 normal + 기울기 none + 좌면 normal / `abnormal` = 나쁜 자세 확정 / 그 외 `unknown` | 3초 필터 거친 상태 기준 |
 | 첫 비정상까지 초 | 구간 시작 → 처음 `abnormal` 확정 (3초 유지) |
 
+- ⚠️ `EMPTY_TOTAL_ADC = 50`은 임시값이다. 실물 FSR로 빈 의자와 앉았을 때 압력 합을 재서 다시 맞춰야 한다 (AI 코드와 같이 바꿀 것).
 - `/current`의 `seated`·`sitting_since`는 예전처럼 3초 필터를 따른다 (형식 유지). **착석 시간은 `/seating` 기준으로 쓴다.**
 - 끝난 구간은 지금은 서버 메모리에만 있다 (재시작하면 사라짐). DB 저장·자정 처리·앱 시각 동기화는 다음 단계.
 - 확인: `python -m hardware.server.check_seating` (22개 시나리오 × 8·6채널, 정답과 비교)

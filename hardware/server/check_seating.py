@@ -3,6 +3,7 @@
 정답: 착석 구간은 generator.expected_timeline()의 segments,
       첫 비정상은 '구간 안에서 나쁜 자세가 short_filter_sec(3초) 이상 이어진 첫 Step의 시작 + 3초'.
 압력 채널 수를 메모리에서만 바꿔서(config.yaml은 그대로) 8채널·6채널 결과가 같은지도 본다.
+자리 비움 판정(seating.is_empty)이 라벨과 맞는지, 깜빡이는지(바뀌는 횟수), 기준까지 여유도 본다.
 
 사용 예 (저장소 최상위):
     python -m hardware.server.check_seating                    # 22개 × 8·6채널
@@ -20,6 +21,7 @@ from common.sensors_base import SampleSkipped
 from hardware.mock.generator import ScenarioPlayer, expected_timeline
 from hardware.mock.scenarios import SCENARIOS, Scenario
 from hardware.server.mock_engine import MockEngine
+from hardware.server.seating import EMPTY_TOTAL_ADC, is_empty
 
 T0 = 1_800_000_000.0            # 가상 시작 시각
 TOL_SEC = 0.15                  # 시각 비교 허용 오차 (10Hz → 한 줄 0.1초)
@@ -39,8 +41,12 @@ def with_channels(cfg: dict, n: int) -> dict:
     return cfg
 
 
-def run(cfg: dict, scenario: Scenario, seed: int = 1) -> list[dict]:
-    """시나리오 끝까지 돌린 뒤 구간 목록 (끝난 것 + 진행 중인 것)"""
+def run(cfg: dict, scenario: Scenario, seed: int = 1, stats: dict | None = None) -> list[dict]:
+    """시나리오 끝까지 돌린 뒤 구간 목록 (끝난 것 + 진행 중인 것).
+    stats를 주면 자리 비움 판정 통계를 채운다: 라벨과 다른 줄 수, 판정이 바뀐 횟수(정답 대비),
+    빈 의자일 때 압력 합 최대, 앉았을 때 압력 합 최소"""
+    st = {"wrong": 0, "flips": 0, "expected_flips": 0, "empty_max": None, "seated_min": None}
+    prev = prev_label = None
     player = ScenarioPlayer(cfg, scenario, seed=seed)
     engine = MockEngine(cfg, seed=seed)
     player.start(T0)
@@ -50,9 +56,20 @@ def run(cfg: dict, scenario: Scenario, seed: int = 1) -> list[dict]:
         ts = T0 + i / hz
         _, step = player.current(ts)
         try:
-            engine.update(player.read(ts), step)
+            sample = player.read(ts)
         except SampleSkipped:
             continue
+        engine.update(sample, step)
+        total = sum(max(v, 0) for v in sample.pressure.values)
+        got, label = is_empty(sample.pressure.values), step.empty and step.phase != Phase.BASELINE.value
+        st["wrong"] += got != label
+        st["flips"] += prev is not None and got != prev
+        st["expected_flips"] += prev_label is not None and label != prev_label
+        prev, prev_label = got, label
+        key, pick = ("empty_max", max) if label else ("seated_min", min)
+        st[key] = total if st[key] is None else pick(st[key], total)
+    if stats is not None:
+        stats.update(st)
     tracker = engine.seating
     segs = tracker.finished()
     if tracker.current is not None:
@@ -125,6 +142,27 @@ def main() -> int:
             ok, got = check(cfg, SCENARIOS[name], args.verbose)
             all_ok &= ok
             results[(n, name)] = got
+
+    print(f"\n=== 자리 비움 판정 (압력 합 < {EMPTY_TOTAL_ADC:g}) — 라벨과 다른 줄, 판정이 바뀐 횟수(정답), "
+          f"빈 의자 합 최대 / 앉았을 때 합 최소")
+    for n in channels:
+        cfg = with_channels(base, n)
+        rows = []
+        for name in names:
+            st: dict = {}
+            run(cfg, SCENARIOS[name], stats=st)
+            rows.append((name, st))
+        bad = {nm for nm, st in rows if st["wrong"] or st["flips"] != st["expected_flips"]}
+        empty_max = max((st["empty_max"] for _, st in rows if st["empty_max"] is not None), default=None)
+        seated_min = min(st["seated_min"] for _, st in rows if st["seated_min"] is not None)
+        print(f"  {n}채널: 라벨과 다른 줄 {sum(st['wrong'] for _, st in rows)}개, 깜빡임 있는 시나리오 "
+              f"{len(bad)}개 | 빈 의자 합 최대 {empty_max} / 앉았을 때 합 최소 {seated_min}")
+        for nm, st in rows:
+            if st["expected_flips"] or nm in bad:
+                print(f"    {nm:<17} 다른 줄 {st['wrong']:>2}  바뀐 횟수 {st['flips']:>2} (정답 {st['expected_flips']:>2})"
+                      f"  빈 의자 합 최대 {st['empty_max']!s:>4} / 앉았을 때 합 최소 {st['seated_min']}"
+                      f"{'  ⚠️' if nm in bad else ''}")
+        all_ok &= not bad
 
     if len(channels) == 2:
         same = [name for name in names if results[(8, name)] == results[(6, name)]]

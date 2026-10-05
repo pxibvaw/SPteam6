@@ -1,7 +1,7 @@
 """가짜 판단 엔진 — AI 엔진이 hardware 브랜치에 합쳐지기 전까지 mock 서버에서 쓰는 대역
 
 AI 엔진(ai 브랜치 ai/engine/upper_body.py)과 같은 모양의 결과를 낸다.
-    - 좌면: 시나리오 라벨 그대로 (압력 채널 평균이 작으면 empty — seating.is_empty)
+    - 좌면: 시나리오 라벨 그대로 (압력 합이 50 미만이면 empty — seating.is_empty, AI 코드와 같은 기준)
     - 착석 구간: seating.SeatingTracker (자리 비움 5초 → 구간 종료, 구간별 정상/비정상/unknown 시간)
     - 목·기울기: 라벨에 맞는 변화량(deltas)을 흉내 내고, 판단 규칙은 upper_body.judge()와 같게
       (threshold는 config.yaml의 upper_rules, 없으면 AI 코드의 기본값)
