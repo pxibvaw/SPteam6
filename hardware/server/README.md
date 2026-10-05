@@ -5,8 +5,8 @@
 
 ```
 시나리오 (hardware/mock/scenarios.py)
-   │  ScenarioPlayer: 라벨 → 가짜 센서 값 (common/mock_sensors.py) + 센서 오류·카메라 5fps 흉내
-   ├─▶ replay CSV (data/synthetic/mock_*.csv, 수집 CSV와 같은 47칸)  → main.py --mode replay
+   │  ScenarioPlayer: 라벨 → 센서 값 (hardware/mock/models.py) + 센서 오류·카메라 5fps·자리 비움 때 센서 끄기
+   ├─▶ replay CSV (data/synthetic/mock_*.csv, 수집 CSV와 같은 형식)  → main.py --mode replay
    └─▶ mock 서버 10Hz ─▶ 가짜 판단 (mock_engine.py) ─▶ FastAPI ──(같은 Wi-Fi, JSON)──▶ 안드로이드 앱
 ```
 
@@ -14,7 +14,7 @@
 
 | 파일 | 하는 일 |
 |---|---|
-| `../mock/scenarios.py` | 시나리오 목록 (자세 하나씩 / 복합 / 센서 오류 / 데모) |
+| `../mock/scenarios.py` | 시나리오 목록 (자세 하나씩 / 복합 / 경계 / 센서 오류 / 데모) |
 | `../mock/generator.py` | 시나리오 → `Sample`(압력·거리·카메라 점). 실시간 생성기 + replay CSV 만들기 |
 | `mock_engine.py` | 가짜 판단: AI 엔진(`ai/engine/upper_body.py`)과 같은 모양의 결과(상태, 확신도, deltas, cues, 3초 필터) |
 | `schemas.py` | 앱에 주는 JSON 형식. **API 형식을 바꿀 때는 여기만 고친다** |
