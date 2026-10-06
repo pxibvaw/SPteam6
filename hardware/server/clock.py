@@ -33,10 +33,11 @@ FIXED_ZONES = {TIMEZONE: timezone(timedelta(hours=9), "KST")}   # zoneinfo 데�
 class ClockError(ValueError):
     """status: 422 잘못된 값 / 409 지금 상태에서 받을 수 없는 변경"""
 
-    def __init__(self, code: str, message: str, status: int = 422):
+    def __init__(self, code: str, message: str, status: int = 422, **extra):
         super().__init__(message)
         self.code = code
         self.status = status
+        self.extra = extra              # 오류 응답에 같이 넣을 값 (예: last_record_at)
 
 
 def load_zone(name: str) -> tzinfo:
@@ -62,6 +63,7 @@ class AppClock:
         self.timezone_name: str | None = None
         self.tz: tzinfo | None = None
         self.synced_at: float | None = None         # 마지막 동기화 시각 (앱 시각)
+        self.min_time: float | None = None          # DB의 마지막 기록 시각 (meta.last_seen). 첫 동기화가 이보다 이전이면 거절
 
     @property
     def synced(self) -> bool:
@@ -77,7 +79,12 @@ class AppClock:
         tz = load_zone(timezone_name)
         new = app_time - self._mono()
         change = None if self.offset is None else new - self.offset
-        # TODO(②): 첫 동기화(change is None)가 DB meta.last_seen보다 이전이면 거절
+        if change is None and self.min_time is not None and app_time < self.min_time - BACKWARD_TOLERANCE_SEC:
+            last = self.local(self.min_time).isoformat(timespec="seconds")
+            raise ClockError("CLOCK_BEFORE_LAST_RECORD",
+                             f"Pi의 마지막 기록({last})보다 이전 시각이라 받을 수 없음. 폰의 '자동 날짜·시간'을 "
+                             f"확인하고 다시 보내세요. 그래도 안 되면 기록 초기화(POST /records/reset) 후 다시 동기화",
+                             status=409, last_record_at=self.min_time)
         if change is not None:
             if change < -BACKWARD_TOLERANCE_SEC:
                 raise ClockError("CLOCK_BACKWARD", f"시각이 {-change:.1f}초 뒤로 가는 변경은 받을 수 없음 "
@@ -118,7 +125,11 @@ class AppClock:
         return sample
 
     def local(self, ts: float) -> datetime:
-        return datetime.fromtimestamp(ts, self.tz or FIXED_ZONES["Asia/Seoul"])
+        return datetime.fromtimestamp(ts, self.tz or load_zone(TIMEZONE))
+
+    def unsync(self) -> None:
+        """동기화를 지운다 (기록 초기화 뒤 앱이 다시 보내게)"""
+        self.offset = self.synced_at = None
 
     def snapshot(self) -> dict:
         t = self.now()

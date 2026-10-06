@@ -24,7 +24,8 @@
 | `power.py` | 센서 전원 정책 (세션 상태 + 착석 구간 → 압력·카메라·거리 켜고 끄기) |
 | `seating.py` | 착석 구간 (자리 비움 5초, 정상/비정상/unknown) |
 | `../sensors/power.py` | 센서 전원 인터페이스 `Switchable` (실제 센서 클래스가 구현) + mock용 `SimulatedSwitch` |
-| `check_seating.py`, `check_session.py` | 확인 도구 (가상 시각으로 시나리오·API 흐름 시험) |
+| `db/` | SQLite: `connection.py`(WAL 등 설정), `migrate.py`(스키마 버전), `migrations/001_init.sql`(테이블 13개), `store.py`(저장 경로 `Recorder`). 설계는 [`../docs/db_design.md`](../docs/db_design.md) |
+| `check_seating.py`, `check_session.py`, `check_db.py` | 확인 도구 (가상 시각으로 시나리오·API 흐름·DB 저장 시험) |
 | `openapi.yaml` | API 명세 (자동 생성 — 직접 고치지 않기). 안드로이드 Retrofit 코드 생성 등에 사용 |
 
 ## 실행
@@ -42,7 +43,9 @@ python main.py --mode replay --file data/synthetic/mock_demo.csv
 python -m hardware.server.mock_server --autostart        # 바로 demo 재생 (PC 시계로 동기화 + 세션 시작), 포트 8000
 python -m hardware.server.mock_server                    # 실제처럼: 앱이 /time/sync → /session/start를 보내야 시작
 python -m hardware.server.mock_server --scenario forward_head --no-loop --autostart
-python -m hardware.server.check_session                  # 시각·세션·센서 전원 흐름 확인 (41개)
+python -m hardware.server.mock_server --no-db            # DB에 저장하지 않음 (기본: data/synthetic/sitsense_mock.db)
+python -m hardware.server.check_session                  # 시각·세션·센서 전원 흐름 확인 (47개)
+python -m hardware.server.check_db                       # DB 저장 확인 (41개, 임시 폴더에 DB를 만들고 지움)
 python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 뒤 openapi.yaml 다시 만들기
 ```
 
@@ -61,13 +64,14 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 | GET | `/current` | 지금 자세 (홈 화면, 1~3초마다 호출) |
 | GET | `/history?seconds=60` | 최근 판단 기록 (1초에 1개, 최대 1시간) |
 | GET | `/baseline` | 기준(바른) 자세 측정값, 측정 중이면 남은 시간 |
-| POST | `/calibrate` | 기준 자세 다시 측정 (10초 동안 바른 자세) |
+| POST | `/calibrate` | 기준 자세 측정 (앉으면 10초). 세션 없이(온보딩) 또는 세션 중(설정의 다시 측정) |
 | GET | `/seating` | 지금 착석 구간 (자리 비움 5초 규칙), 지금 순간 normal / abnormal / unknown |
 | GET | `/seating/segments?hours=24` | 끝난 착석 구간 (시작·끝·종료 사유·첫 비정상까지 초·정상/비정상/unknown 초) |
 | POST | `/time/sync` | 앱 시각·시간대 보내기 `{"app_time": 1791207600.1, "timezone": "Asia/Seoul"}` |
 | GET | `/time` | 동기화 상태, `boot_id` (바뀌었거나 `synced=false`면 다시 동기화) |
 | GET | `/session` | 세션 상태·경과 시간·착석 시간·센서 전원 |
-| POST | `/session/start` · `/pause` · `/resume` · `/stop` | 측정 시작·일시정지·재개·정지 |
+| POST | `/session/start` · `/pause` · `/resume` · `/stop` | 측정 시작(기준 자세 10초 포함)·일시정지·재개·정지 |
+| POST | `/records/reset` | 기록 초기화 `{"confirm": "DELETE_RECORDS"}` (설정·기준 자세 유지, 세션 없을 때만) |
 | GET | `/mock/scenarios` | **mock 전용.** 시나리오 목록 |
 | POST | `/mock/scenario` | **mock 전용.** 시나리오 바꾸기 `{"name": "forward_head", "loop": true}` |
 
@@ -100,6 +104,16 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
   서버가 다시 켜지면(재부팅 포함) 사라지고 `boot_id`가 바뀐다 → 앱은 연결할 때·세션 시작 전마다 보낸다.
 - **세션:** 동기화 전에는 시작을 거절한다 (`409 CLOCK_NOT_SYNCED`). 기록·판단은 `running`일 때만.
   `elapsed_sec`·`seated_sec`에서 일시정지 시간은 빠진다. 일시정지하면 그때 착석 구간이 끝난다 (`end_reason: pause`).
+- **기준 자세:** 시작 버튼(`POST /session/start`)에 10초 측정이 들어 있다. 압력으로 앉은 게 확인되면 측정을 시작하고
+  (서 있으면 대기, 측정 중 일어나면 다시 대기), 진행은 `GET /session`의 `baseline`으로 본다.
+  처음이면 `initial`, 이후 세션은 `session`, `/calibrate`로 다시 재면 `recalibration`.
+  `/calibrate`는 **세션 없이도** 받는다 (온보딩). 이때는 기준 자세만 재고 구간·원본 기록은 남기지 않는다
+  (`baselines`에만 저장, 기준이 없으면 `initial`). 앉기를 기다리는 동안 `/baseline`의 `waiting_seat`가 true
+  (`state`는 `measuring`). 일시정지 중에는 `409 NOT_RUNNING`.
+  재개 때는 다시 재지 않는다. 실패하면 직전 성공 기준으로 계속(`using_previous: true`)하고,
+  성공한 기준이 한 번도 없으면 세션을 멈춘다 (`state: idle`, `end_reason: baseline_failed`).
+- **저장:** 세션·구간·기준 자세는 즉시, 시간대별 시간·거리·원본은 1분마다 한 번에 SQLite에 쓴다.
+  서버가 정지 없이 꺼지면 다음에 켤 때 열린 세션·구간을 마지막 저장 시각에 `crash`로 닫는다 (최대 1분 손실).
 - **오류:** `{"detail": {"code", "message", "resync_required", "boot_id"}}`. 앱은 `code`로 처리한다.
 
 | code | HTTP | 언제 |
@@ -107,11 +121,17 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 | `CLOCK_NOT_SYNCED` | 409 | 동기화 전에 세션 시작 |
 | `CLOCK_BACKWARD` | 409 | 다시 동기화했는데 시각이 0.5초 넘게 뒤로 감 (0.5초 이내는 200 `applied: false`, 시각 그대로) |
 | `CLOCK_JUMP_IN_SESSION` | 409 | 측정 중 다시 동기화했는데 2초 넘게 앞으로 감 (정지한 뒤 보내면 됨) |
+| `CLOCK_BEFORE_LAST_RECORD` | 409 | 서버를 켠 뒤 첫 동기화가 DB의 마지막 기록보다 이전 (`detail.last_record_at`) — 아래 복구 |
 | `SESSION_ACTIVE` | 409 | 세션이 있는데 또 시작 |
 | `NOT_RUNNING` | 409 | 실행 중이 아닌데 일시정지 / 기준 자세 측정 |
 | `NOT_PAUSED` | 409 | 일시정지가 아닌데 재개 |
 | `NO_SESSION` | 409 | 세션이 없는데 정지 |
 | `INVALID_TIME` / `INVALID_TIMEZONE` | 422 | 잘못된 시각(2024년 이전 등) / Asia/Seoul이 아닌 시간대 |
+| `CONFIRM_REQUIRED` | 422 | 기록 초기화에 확인 문구(`DELETE_RECORDS`)가 없음 |
+
+**`CLOCK_BEFORE_LAST_RECORD` 복구 (앱 안내 순서):** ① 폰의 '자동 날짜·시간'을 켜고 다시 동기화 →
+② 그래도 거절되면 예전에 잘못된(미래) 시각으로 기록이 남은 것 → 기록 초기화(`POST /records/reset`) 후 다시 동기화.
+설정과 기준 자세는 남는다.
 
 | 상황 | 압력 | 카메라·거리 |
 |---|---|---|

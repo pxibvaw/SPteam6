@@ -89,8 +89,8 @@ def main() -> int:
     check("GET /time synced=false, resync_required", (lambda j: not j["synced"] and j["resync_required"])(
         c.get("/time").json()), c.get("/time").json()["message"])
     for path, want in (("/session/pause", "NOT_RUNNING"), ("/session/resume", "NOT_PAUSED"),
-                       ("/session/stop", "NO_SESSION"), ("/calibrate", "NOT_RUNNING")):
-        check(f"{path} (세션 없음)", code(c.post(path)) == f"409 {want}", code(c.post(path)))
+                       ("/session/stop", "NO_SESSION"), ("/calibrate", "CLOCK_NOT_SYNCED")):
+        check(f"{path} (세션 없음, 동기화 전)", code(c.post(path)) == f"409 {want}", code(c.post(path)))
     r = c.post("/time/sync", json={"app_time": 5, "timezone": "Asia/Seoul"})
     check("잘못된 시각", code(r) == "422 INVALID_TIME", code(r))
     r = c.post("/time/sync", json={"app_time": APP_START, "timezone": "Mars/Base"})

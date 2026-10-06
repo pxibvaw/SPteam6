@@ -81,10 +81,21 @@ class BaselineValue:
     pressure: list[float]
     distance_mm: float | None
     pose: dict[str, list[float]] | None
+    kind: str = "initial"           # initial / session / recalibration / adjusted
+
+
+# 기준 자세 측정 품질 (⚠️ 임시값 — 실물로 조정)
+BASELINE_MIN_POSE_RATIO = 0.5       # 사람을 찾은 비율이 이보다 낮으면 실패 no_person
+BASELINE_MIN_DISTANCE_RATIO = 0.5   # 거리를 잰 비율이 이보다 낮으면 실패 sensor_lost
+BASELINE_MAX_PRESSURE_CV = 0.15     # 압력 합의 변동계수(표준편차/평균)가 이보다 크면 실패 too_much_motion
 
 
 class MockEngine:
-    def __init__(self, cfg: dict, seed: int | None = None):
+    def __init__(self, cfg: dict, seed: int | None = None, *, auto_baseline: bool = True,
+                 baseline: BaselineValue | None = None):
+        """auto_baseline: 기준이 없으면 앉는 즉시 알아서 측정 (서버 없이 엔진만 돌릴 때).
+        서버는 False로 두고 세션 시작·/calibrate 때 request_baseline()을 부른다.
+        baseline: 이전에 저장한 기준 (있으면 측정이 끝나기 전에도 이걸로 판단)"""
         th = cfg["thresholds"]
         self.rules = {**UPPER_RULE_DEFAULTS, **(cfg.get("upper_rules") or {})}
         self.close_delta_mm = th["close_delta_mm"]
@@ -95,9 +106,12 @@ class MockEngine:
         hold = th["short_filter_sec"]
         self.filters = {"seat": StateFilter(hold), "head": StateFilter(hold), "tilt": StateFilter(hold)}
 
-        self.baseline: BaselineValue | None = None
-        self._measure_until: float | None = None
-        self._measure_start: float | None = None
+        self.auto_baseline = auto_baseline
+        self.baseline: BaselineValue | None = baseline     # 지금 판단에 쓰는 기준
+        self.measure: dict | None = None    # 측정 중: {"kind", "state": waiting_seat/measuring, "start", "until"}
+        self.last_result: dict | None = None
+        self.on_measure_start = None        # (ts, 초) → 측정 시작 알림 (mock: 그동안 바른 자세 유지)
+        self.on_baseline = None             # (결과 dict) → 측정 끝 알림 (저장)
         self._buf: list[Sample] = []
 
         self.latest: dict | None = None
@@ -111,37 +125,76 @@ class MockEngine:
         self.seating = SeatingTracker(cfg)
 
     # --- 기준 자세 ----------------------------------------------------------
-    def start_baseline(self, ts: float) -> float:
-        """기준 자세 측정 시작. 측정 시간(초)을 돌려준다"""
-        self._measure_start, self._measure_until = ts, ts + self.baseline_seconds
+    def request_baseline(self, kind: str) -> float:
+        """기준 자세 측정 요청. 앉은 게 확인되면(착석 구간 안) 측정을 시작한다. 측정 시간(초)을 돌려준다"""
+        self.measure = {"kind": kind, "state": "waiting_seat", "start": None, "until": None}
         self._buf = []
         return self.baseline_seconds
 
+    def cancel_baseline(self) -> None:
+        self.measure = None
+        self._buf = []
+
+    def pause_baseline(self) -> None:
+        """일시정지: 측정 중이었으면 처음부터 다시 (앉을 때까지 대기)"""
+        if self.measure is not None:
+            self.measure.update(state="waiting_seat", start=None, until=None)
+            self._buf = []
+
     @property
     def measuring(self) -> bool:
-        return self._measure_until is not None
+        return self.measure is not None
 
     def baseline_remaining(self, ts: float) -> float | None:
-        return max(0.0, self._measure_until - ts) if self.measuring else None
+        if self.measure is None:
+            return None
+        if self.measure["state"] == "waiting_seat":
+            return float(self.baseline_seconds)
+        return max(0.0, self.measure["until"] - ts)
 
-    def _collect_baseline(self, sample: Sample) -> None:
-        self._buf.append(sample)
-        if sample.ts < self._measure_until:
+    def _step_baseline(self, sample: Sample, empty: bool) -> None:
+        m = self.measure
+        if m["state"] == "waiting_seat":
+            if not empty and self.seating.current is not None:      # 앉은 게 확인됨 → 측정 시작
+                m.update(state="measuring", start=sample.ts, until=sample.ts + self.baseline_seconds)
+                self._buf = []
+                if self.on_measure_start:
+                    self.on_measure_start(sample.ts, self.baseline_seconds)
             return
-        p = np.mean([s.pressure.values for s in self._buf], axis=0)
-        dists = [s.distance.distance_mm for s in self._buf if s.distance.valid]
-        poses = [s.pose for s in self._buf if s.pose is not None and s.pose.detected]
-        pose = None
-        if poses:
-            pose = {n: [round(float(np.mean([getattr(q.points[n], a) for q in poses if n in q.points])), 4)
-                        for a in ("x", "y", "z", "visibility")]
-                    for n in LANDMARK_NAMES}
-        self.baseline = BaselineValue(
-            created_at=sample.ts, seconds=round(sample.ts - self._measure_start, 1),
-            pressure=[round(float(v), 1) for v in p],
-            distance_mm=float(np.median(dists)) if dists else None, pose=pose)
-        self._measure_until = self._measure_start = None
-        self._buf = []
+        if empty:                                   # 측정 중 일어남 → 다시 앉을 때까지 대기
+            m.update(state="waiting_seat", start=None, until=None)
+            self._buf = []
+            return
+        self._buf.append(sample)
+        if sample.ts >= m["until"]:
+            self._finish_baseline(sample.ts)
+
+    def _finish_baseline(self, ts: float) -> None:
+        m, buf = self.measure, self._buf
+        n = len(buf)
+        totals = np.array([sum(s.pressure.values) for s in buf], dtype=float)
+        dists = [s.distance.distance_mm for s in buf if s.distance.valid]
+        poses = [s.pose for s in buf if s.pose is not None and s.pose.detected]
+        reason = None
+        if len(poses) < BASELINE_MIN_POSE_RATIO * n:
+            reason = "no_person"
+        elif len(dists) < BASELINE_MIN_DISTANCE_RATIO * n:
+            reason = "sensor_lost"
+        elif totals.std() / max(totals.mean(), 1.0) > BASELINE_MAX_PRESSURE_CV:
+            reason = "too_much_motion"
+        result = {"kind": m["kind"], "status": "ok" if reason is None else "failed", "fail_reason": reason,
+                  "measured_at": ts, "seconds": round(ts - m["start"], 1), "value": None}
+        if reason is None:
+            p = np.mean([s.pressure.values for s in buf], axis=0)
+            pose = {nm: [round(float(np.mean([getattr(q.points[nm], a) for q in poses if nm in q.points])), 4)
+                         for a in ("x", "y", "z", "visibility")]
+                    for nm in LANDMARK_NAMES}
+            self.baseline = result["value"] = BaselineValue(
+                created_at=ts, seconds=result["seconds"], pressure=[round(float(v), 1) for v in p],
+                distance_mm=float(np.median(dists)), pose=pose, kind=m["kind"])
+        self.measure, self._buf, self.last_result = None, [], result     # 실패면 이전 기준(self.baseline) 유지
+        if self.on_baseline:
+            self.on_baseline(result)
 
     # --- 가짜 판단 ----------------------------------------------------------
     def judge_seat(self, sample: Sample, step: Step) -> tuple[SeatState, float]:
@@ -201,10 +254,10 @@ class MockEngine:
     # --- 한 순간 처리 -------------------------------------------------------
     def update(self, sample: Sample, step: Step) -> dict:
         ts = sample.ts
-        if self.baseline is None and not self.measuring:
-            self.start_baseline(ts)                 # 처음에는 자동으로 기준 측정
-        if self.measuring:
-            self._collect_baseline(sample)
+        if self.auto_baseline and self.baseline is None and self.measure is None:
+            self.request_baseline("initial")        # 엔진만 돌릴 때: 기준이 없으면 앉는 즉시 측정
+        if self.measure is not None:
+            self._step_baseline(sample, is_empty(sample.pressure.values))
 
         self.last_ok["pressure"] = ts
         if sample.distance.valid:

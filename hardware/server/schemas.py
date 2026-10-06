@@ -121,6 +121,7 @@ class Baseline(BaseModel):
     """기준(바른) 자세 측정값. 측정 중에도 이전 기준값을 준다"""
     state: BaselineState = Field(..., description="none 측정 전 / measuring 측정 중 / ready 완료")
     remaining_sec: float | None = Field(None, description="측정 중이면 남은 초")
+    waiting_seat: bool = Field(False, description="측정을 요청했지만 앉기를 기다리는 중 (이때 state는 measuring)")
     created_at: float | None = Field(None, description="기준값을 만든 시각")
     seconds: float | None = Field(None, description="측정 시간")
     pressure: list[float] | None = Field(None, description="채널별 평균 압력")
@@ -189,11 +190,14 @@ class SeatingSegments(BaseModel):
 
 class ErrorDetail(BaseModel):
     code: str = Field(..., description="앱이 처리할 오류 코드 (CLOCK_NOT_SYNCED, CLOCK_BACKWARD, "
-                                       "CLOCK_JUMP_IN_SESSION, SESSION_ACTIVE, NOT_RUNNING, NOT_PAUSED, "
-                                       "NO_SESSION, INVALID_TIME, INVALID_TIMEZONE)")
+                                       "CLOCK_JUMP_IN_SESSION, CLOCK_BEFORE_LAST_RECORD, SESSION_ACTIVE, "
+                                       "NOT_RUNNING, NOT_PAUSED, NO_SESSION, CONFIRM_REQUIRED, INVALID_TIME, "
+                                       "INVALID_TIMEZONE)")
     message: str = Field(..., description="개발자용 설명 (앱 화면 문구는 앱이 만든다)")
     resync_required: bool = Field(..., description="true면 POST /time/sync를 다시 보내야 함")
     boot_id: str = Field(..., description="서버가 켜질 때마다 바뀌는 값. 앱이 기억한 값과 다르면 재시작된 것")
+    last_record_at: float | None = Field(
+        None, description="CLOCK_BEFORE_LAST_RECORD일 때 Pi의 마지막 기록 시각 (앱이 날짜를 보여줄 때)")
 
 
 class ErrorResponse(BaseModel):
@@ -243,6 +247,25 @@ class SessionState(str, Enum):
     paused = "paused"
 
 
+class BaselinePhase(str, Enum):
+    none = "none"
+    waiting_seat = "waiting_seat"
+    measuring = "measuring"
+    ready = "ready"
+    failed = "failed"
+
+
+class SessionBaseline(BaseModel):
+    """세션의 기준 자세 — 시작 버튼을 누르면 앉은 게 확인된 뒤 10초 측정 (재개 때는 다시 재지 않음)"""
+    state: BaselinePhase = Field(..., description="none 기준 없음 / waiting_seat 앉기를 기다림 / measuring 측정 중 / "
+                                                  "ready 기준 있음 / failed 마지막 측정 실패")
+    kind: str | None = Field(None, description="측정 중이거나 마지막 측정의 종류 (initial / session / recalibration)")
+    remaining_sec: float | None = Field(None, description="측정 중이면 남은 초 (앉기를 기다리는 중이면 측정 시간 전체)")
+    fail_reason: str | None = Field(None, description="실패 이유 (no_person / sensor_lost / too_much_motion)")
+    using_previous: bool = Field(..., description="이번 측정이 실패해서 직전 성공 기준으로 판단 중인지")
+    measured_at: float | None = Field(None, description="지금 쓰는 기준을 잰 시각")
+
+
 class SessionStatus(BaseModel):
     """측정 세션 상태 — 홈 하단 측정 바"""
     state: SessionState = Field(..., description="idle 세션 없음 / running 측정 중 / paused 일시정지")
@@ -256,6 +279,18 @@ class SessionStatus(BaseModel):
     sensors: SessionSensors
     clock_synced: bool
     boot_id: str
+    end_reason: str | None = Field(None, description="마지막 세션이 끝난 이유 (stop / baseline_failed). 진행 중이면 null")
+    baseline: SessionBaseline
+
+
+class RecordsReset(BaseModel):
+    """기록 초기화 요청 — 앱에서 확인 절차를 거친 뒤 보낸다"""
+    confirm: str = Field(..., description="반드시 'DELETE_RECORDS'", examples=["DELETE_RECORDS"])
+
+
+class RecordsResetResult(BaseModel):
+    deleted: dict[str, int] = Field(..., description="테이블별 지운 줄 수 (설정·기준 자세는 유지)")
+    resync_required: bool = Field(..., description="true — 시각 동기화를 지웠으니 POST /time/sync를 다시 보내야 함")
 
 
 class ScenarioStep(BaseModel):

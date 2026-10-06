@@ -5,6 +5,7 @@
 | 실행 중, 착석 구간 안 (5초 미만 비움 포함) | 켬   | 켬          |
 | 실행 중, 착석 구간 밖 (비움 5초 / 아직 안 앉음) | 켬 | 끔        |
 | 일시정지                               | 켬   | 끔          |  ← 압력만 읽고 기록·판단은 안 함
+| 세션 없이 기준 자세 측정 (온보딩)          | 켬   | 앉으면 켬    |  ← 측정만, 기록 안 함
 
 다시 앉으면 착석 구간이 시작될 때(압력 1초 확인) 카메라·거리를 켠다.
 센서는 hardware/sensors/power.py의 Switchable이면 무엇이든 된다 (mock은 SimulatedSwitch).
@@ -20,8 +21,8 @@ SENSORS = ("pressure", "camera", "distance")
 
 
 def decide(session_state: str, in_segment: bool) -> dict[str, bool]:
-    """세션 상태(idle/running/paused) + 착석 구간 안인지 → 센서별 켤지"""
-    if session_state == "running":
+    """세션 상태(idle/running/paused, 세션 없이 측정 중이면 calibrating) + 착석 구간 안인지 → 센서별 켤지"""
+    if session_state in ("running", "calibrating"):
         return {"pressure": True, "camera": in_segment, "distance": in_segment}
     if session_state == "paused":
         return {"pressure": True, "camera": False, "distance": False}
