@@ -1,7 +1,7 @@
 # hardware/server — 앱 API (mock 서버) · 더미 데이터
 
 > **상태: 초안 v0.1 (하드웨어 담당, 팀 확인 전).** 시각 동기화·세션·SQLite 저장·자정 요약까지 구현.
-> 리포트(홈·일간·주간·목표) 읽기 API는 다음 단계(④), 설정·알림·기기 상태는 ⑤.
+> 리포트(홈·일간·주간·목표) 읽기 API까지 구현. 설정·알림·기기 상태는 다음 단계(⑤).
 > 실물 센서가 없어서 지금은 **시나리오 더미 데이터 + 가짜 판단**으로 돌아간다.
 
 ```
@@ -27,8 +27,8 @@
 | `power.py` | 센서 전원 정책 (세션 상태 + 착석 구간 → 압력·카메라·거리 켜고 끄기) |
 | `seating.py` | 착석 구간 (자리 비움 5초, 정상/비정상/unknown) |
 | `../sensors/power.py` | 센서 전원 인터페이스 `Switchable` (실제 센서 클래스가 구현) + mock용 `SimulatedSwitch` |
-| `db/` | SQLite: `connection.py`(WAL 등 설정), `migrate.py`(스키마 버전), `migrations/`(001 테이블 13개, 002 다시 계산 표시), `store.py`(저장 경로 `Recorder`), `summary.py`(하루 요약 계산·다시 계산 명령어), `jobs.py`(자정 작업). 설계는 [`../docs/db_design.md`](../docs/db_design.md) |
-| `check_seating.py`, `check_session.py`, `check_db.py`, `check_summary.py` | 확인 도구 (가상 시각으로 시나리오·API 흐름·DB 저장·자정 요약 시험) |
+| `db/` | SQLite: `connection.py`(WAL 등 설정), `migrate.py`(스키마 버전), `migrations/`(001 테이블 13개, 002 다시 계산 표시), `store.py`(저장 경로 `Recorder`), `summary.py`(하루 요약 계산·다시 계산 명령어), `jobs.py`(자정 작업), `reports.py`(리포트 계산, 읽기 전용). 설계는 [`../docs/db_design.md`](../docs/db_design.md) |
+| `check_seating.py`, `check_session.py`, `check_db.py`, `check_summary.py`, `check_reports.py` | 확인 도구 (가상 시각으로 시나리오·API 흐름·DB 저장·자정 요약·리포트 시험) |
 | `openapi.yaml` | API 명세 (자동 생성 — 직접 고치지 않기). 안드로이드 Retrofit 코드 생성 등에 사용 |
 
 ## 실행
@@ -50,6 +50,9 @@ python -m hardware.server.mock_server --no-db            # DB에 저장하지 �
 python -m hardware.server.check_session                  # 시각·세션·센서 전원 흐름 확인 (47개)
 python -m hardware.server.check_db                       # DB 저장 확인 (52개, 임시 폴더에 DB를 만들고 지움)
 python -m hardware.server.check_summary                  # 자정 요약·원본 삭제 확인 (32개)
+python -m hardware.server.check_reports                  # 리포트 API 확인 (37개, 2주치 가짜 기록으로)
+python -m hardware.mock.fake_history --overwrite         # 2주치 가짜 기록 → data/synthetic/sitsense_history.db
+python -m hardware.server.mock_server --db data/synthetic/sitsense_history.db   # 가짜 기록으로 리포트 화면 보기
 python -m hardware.server.db.summary --db data/synthetic/sitsense_mock.db --recompute --all   # 하루 요약 다시 계산
 python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 뒤 openapi.yaml 다시 만들기
 ```
@@ -77,6 +80,11 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 | GET | `/session` | 세션 상태·경과 시간·착석 시간·센서 전원 |
 | POST | `/session/start` · `/pause` · `/resume` · `/stop` | 측정 시작(기준 자세 10초 포함)·일시정지·재개·정지 |
 | POST | `/records/reset` | 기록 초기화 `{"confirm": "DELETE_RECORDS"}` (설정·기준 자세 유지, 세션 없을 때만) |
+| GET | `/reports/home?date=` | 홈 요약: 정상 비율·총 착석·하루 평균 자세·좌우 편향·목표 4종 오늘/어제 (기본 오늘) |
+| GET | `/reports/daily?date=YYYY-MM-DD` | 일간 리포트 (지난 날은 자정 요약, 오늘은 실시간) |
+| GET | `/reports/weekly?start=YYYY-MM-DD` | 주간 리포트 (월~일, 지난주 비교 5개, 시간대별 패턴) |
+| GET | `/reports/goals?date=` | 목표·피드백 카드 4종 (오늘·어제·지난주 평균·최근 7일·추세·주된 방향) |
+| GET | `/layout` | 센서 배치 (채널별 위치, `/current`의 `pressure`·`pressure_ratio` 순서와 같음) |
 | GET | `/mock/scenarios` | **mock 전용.** 시나리오 목록 |
 | POST | `/mock/scenario` | **mock 전용.** 시나리오 바꾸기 `{"name": "forward_head", "loop": true}` |
 
@@ -138,6 +146,13 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 | `NO_SESSION` | 409 | 세션이 없는데 정지 |
 | `INVALID_TIME` / `INVALID_TIMEZONE` | 422 | 잘못된 시각(2024년 이전 등) / Asia/Seoul이 아닌 시간대 |
 | `CONFIRM_REQUIRED` | 422 | 기록 초기화에 확인 문구(`DELETE_RECORDS`)가 없음 |
+| `INVALID_DATE` | 422 | 리포트 날짜 형식이 틀림(`YYYY-MM-DD`) 또는 미래 날짜 |
+| `NO_DB` | 503 | DB 없이(`--no-db`) 켠 서버에 리포트 요청 |
+
+**리포트 규칙:** 지난 날은 `daily_summary`, 오늘(또는 아직 요약 전인 날)은 같은 계산 함수(`summary.compute_day`)로 실시간.
+정상 비율 = 정상 ÷ (착석 − unknown), 총 착석은 unknown 포함. 자세 시간은 모두 겹치지 않는 값(우선순위), 겹치는 원래 값은
+일간 `postures_raw`에만. '하루 평균'은 착석이 있는 날만. 한 주는 월~일(월요일이 아니면 그 주 월요일로 맞춤).
+오늘 값은 1분마다 저장되는 기록 기준이라 최대 1분 늦다(`as_of`). 동기화 전에는 `409 CLOCK_NOT_SYNCED`.
 
 **`CLOCK_BEFORE_LAST_RECORD` 복구 (앱 안내 순서):** ① 폰의 '자동 날짜·시간'을 켜고 다시 동기화 →
 ② 그래도 거절되면 예전에 잘못된(미래) 시각으로 기록이 남은 것 → 기록 초기화(`POST /records/reset`) 후 다시 동기화.
@@ -186,7 +201,7 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 | # | 항목 | 지금 코드 | 누구와 |
 |---|---|---|---|
 | 1 | 거리센서 | 문서·`config.yaml`은 VL53L1X, 하드웨어 확정 목록은 HC-SR04/미정 → mock은 둘 다 흉내 (`--distance-sensor`) | 전체 |
-| 2 | 리포트(홈·일간·주간·목표) API | 저장·자정 요약은 완료, 읽기 API는 ④에서 추가 (계산 출처는 `../docs/db_design.md` 7장) | 앱 |
+| 2 | 홈 "오른쪽 편향 비율 33%" | 무엇의 비율인지 미정 → 대표 자세 비율(`daily_posture.ratio`)과 좌우 편향(`lean_balance.right_ratio`)을 둘 다 줌 | 앱 |
 | 3 | `postures`에 기울기 포함 | `tilt_left`/`tilt_right`도 나쁜 자세로 넣음 | 전체 |
 | 4 | 3초 필터 | 서버가 주는 상태는 3초 필터를 거친 값 (`pending`에 대기 중인 변화) | AI |
 | 5 | FSR 개수 | 수집 단계 8칸 → 실험 후 6칸 선별, **최종 6칸** (2열 × 3행). `config.yaml`은 아직 8 → 6채널 제안값은 `../mock/README.md` (공용 파일이라 팀 상의 후 변경) | AI |

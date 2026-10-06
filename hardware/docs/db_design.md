@@ -323,15 +323,24 @@ PRAGMA temp_store = MEMORY;
 | 홈 | 측정 바 | `sessions`·`session_events` + 실시간 |
 | 일간 | 총 착석, 정상 비율, 자세별 누적(겹치지 않음), 가장 많이 나타난 습관 | `daily_summary` (오늘은 실시간 계산) |
 | 일간 | 최대 연속 착석 (자정에서 자름), 무너짐 평균 | `seating_segments` |
-| 일간 | 좌우 편향 비교 | `raw_lean_left/right_sec` |
+| 일간 | 좌우 편향 비교 | `lean_left/right_sec` (겹치지 않는 값, ④에서 통일) |
 | 일간 | 거리 평균, 기준보다 가까웠던 시간 | `hour_metrics` |
 | 주간 | 주간 정상 비율 (합 ÷ 합), 지난주 대비 %p, 요일별 착석 | `daily_summary` 두 주 |
-| 주간 | 지난주 비교 5개 (기록 있는 날만 평균) | `daily_summary` (기울기 방향은 `raw_tilt_*` — 9장의 가정, 팀 확인 필요) |
+| 주간 | 지난주 비교 5개 (기록 있는 날만 평균) | `daily_summary` (기울기 방향은 `tilt_left/right_sec` — 9장의 가정, 팀 확인 필요) |
 | 주간 | 이번 주 패턴 (시간대) | `posture_hour` |
 | 피드백 | 목표 카드 (오늘·어제·지난주 평균·7일 막대·추세·주된 방향) | `daily_summary` 겹치는/안 겹치는 값 + 방향별 값 |
 | 설정 | 측정·알림 설정, CSV 내보내기, 기록 초기화 | `settings`, 위 테이블 |
 
 실시간 값(지금 자세, 압력 비율, 알림 배너, 센서 상태, 일어나기 알림)은 DB가 아니라 서버 메모리에서 준다.
+
+**읽기 API (④, `hardware/server/db/reports.py`):** `/reports/home`, `/reports/daily`, `/reports/weekly`, `/reports/goals`, `/layout`.
+- 리포트의 자세 시간은 **모두 겹치지 않는 값**(좌우 편향·기울기 방향·목표 포함). 겹치는 원래 값은 일간 `postures_raw`에만.
+- 홈 하루 평균 자세 = 정상 제외 최대 자세, 비율 = 그 시간 ÷ (착석 − unknown). 좌우 편향은 왼·오른 시간 + 오른쪽 비율을 같이 준다.
+- 목표 4종: 다리 꼬기(`cross_left`+`cross_right`, 주된 방향 왼/오른다리 위), 목 앞으로 내미는 자세(`forward_head`),
+  한쪽으로 기대기(`lean_left`+`lean_right`, 기울기 제외), 장시간 연속 착석(`max_continuous_sec`). 추세는 최근 7일 직선 기울기(분/일),
+  하루 1분 미만이면 `flat`. 지난주 평균은 지난 달력주(월~일)의 기록 있는 날 평균. 고른 목표(`selected`)는 `settings.goals`.
+- 주간 최대 연속 착석 비교는 하루 최대값의 평균, 화면 거리는 그 주 `hour_metrics` 합 ÷ 개수.
+  이번 주 패턴은 시간대별(0~23시) 비정상 ÷ 판단 시간 + 판단 10분 이상 중 가장 나쁜 시간대(`worst_hour`).
 
 ## 8. 예상 용량 (어림)
 

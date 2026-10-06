@@ -308,6 +308,183 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /reports/home:
+    get:
+      tags:
+      - 리포트
+      summary: '홈 요약: 정상 비율·총 착석·하루 평균 자세·좌우 편향·목표 4종 오늘/어제'
+      operationId: report_home_reports_home_get
+      parameters:
+      - name: date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: YYYY-MM-DD (기본 오늘, 한국 시간)
+          title: Date
+        description: YYYY-MM-DD (기본 오늘, 한국 시간)
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HomeReport'
+        '409':
+          description: 지금 상태에서 할 수 없음 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: 잘못된 값 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: DB 없이 켠 서버 (NO_DB)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /reports/daily:
+    get:
+      tags:
+      - 리포트
+      summary: 일간 리포트 (지난 날은 자정 요약, 오늘은 실시간)
+      operationId: report_daily_reports_daily_get
+      parameters:
+      - name: date
+        in: query
+        required: true
+        schema:
+          type: string
+          description: YYYY-MM-DD (한국 시간)
+          title: Date
+        description: YYYY-MM-DD (한국 시간)
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DailyReport'
+        '409':
+          description: 지금 상태에서 할 수 없음 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: 잘못된 값 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: DB 없이 켠 서버 (NO_DB)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /reports/weekly:
+    get:
+      tags:
+      - 리포트
+      summary: 주간 리포트 (월~일, 지난주 비교, 시간대별 패턴)
+      operationId: report_weekly_reports_weekly_get
+      parameters:
+      - name: start
+        in: query
+        required: true
+        schema:
+          type: string
+          description: 그 주의 아무 날 YYYY-MM-DD (월요일로 맞춤)
+          title: Start
+        description: 그 주의 아무 날 YYYY-MM-DD (월요일로 맞춤)
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WeeklyReport'
+        '409':
+          description: 지금 상태에서 할 수 없음 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: 잘못된 값 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: DB 없이 켠 서버 (NO_DB)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /reports/goals:
+    get:
+      tags:
+      - 리포트
+      summary: 목표·피드백 카드 4종 (오늘·어제·지난주 평균·최근 7일·추세·주된 방향)
+      operationId: report_goals_reports_goals_get
+      parameters:
+      - name: date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: YYYY-MM-DD (기본 오늘)
+          title: Date
+        description: YYYY-MM-DD (기본 오늘)
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoalsReport'
+        '409':
+          description: 지금 상태에서 할 수 없음 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: 잘못된 값 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: DB 없이 켠 서버 (NO_DB)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /layout:
+    get:
+      tags:
+      - 기기
+      summary: 센서 배치 (채널별 위치). /current의 pressure·pressure_ratio 순서와 같음
+      operationId: layout_layout_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Layout'
   /records/reset:
     post:
       tags:
@@ -471,6 +648,27 @@ components:
       - started
       - seconds
       title: CalibrateResult
+    Collapse:
+      properties:
+        avg_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Avg Sec
+          description: '자세 무너짐: 착석 시작 → 첫 비정상 확정 평균 (그날 시작한 구간, null 제외)'
+        count:
+          type: integer
+          title: Count
+          description: 평균에 들어간 구간 수
+        segments:
+          type: integer
+          title: Segments
+          description: 그날 시작한 착석 구간 수
+      type: object
+      required:
+      - count
+      - segments
+      title: Collapse
     Confidence:
       properties:
         seat:
@@ -644,6 +842,98 @@ components:
       - baseline_ready
       title: Current
       description: 지금 자세 — 홈 화면용, 1~3초마다 호출
+    DailyReport:
+      properties:
+        date:
+          type: string
+          title: Date
+        source:
+          type: string
+          title: Source
+          description: summary(자정 요약) / live(실시간 계산)
+        has_data:
+          type: boolean
+          title: Has Data
+          description: 착석 시간이 있는지
+        as_of:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: As Of
+          description: 마지막 저장 시각 — 오늘 값은 최대 1분 늦음
+        seated_sec:
+          type: number
+          title: Seated Sec
+          description: 총 착석 (unknown 포함)
+        normal_sec:
+          type: number
+          title: Normal Sec
+        abnormal_sec:
+          type: number
+          title: Abnormal Sec
+        unknown_sec:
+          type: number
+          title: Unknown Sec
+        judged_sec:
+          type: number
+          title: Judged Sec
+          description: 착석 − unknown
+        normal_ratio:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Normal Ratio
+          description: 정상 ÷ (착석 − unknown). 분모가 0이면 null
+        sessions:
+          type: integer
+          title: Sessions
+          description: 그날에 걸친 세션 수 (측정했지만 앉지 않은 날 구분용)
+        max_continuous_sec:
+          type: number
+          title: Max Continuous Sec
+          description: 최대 연속 착석 (자정에서 자름)
+        collapse:
+          $ref: '#/components/schemas/Collapse'
+        postures:
+          additionalProperties:
+            type: number
+          type: object
+          title: Postures
+          description: '자세별 누적 (겹치지 않음): normal + 7개 자세'
+        postures_raw:
+          additionalProperties:
+            type: number
+          type: object
+          title: Postures Raw
+          description: 겹치는 원래 값 (참고)
+        lean_balance:
+          $ref: '#/components/schemas/LeanBalance'
+        distance:
+          $ref: '#/components/schemas/DistanceDay'
+        top_habit:
+          anyOf:
+          - $ref: '#/components/schemas/PostureShare'
+          - type: 'null'
+          description: 가장 많이 나타난 습관 (정상 제외 최대). 없으면 null
+      type: object
+      required:
+      - date
+      - source
+      - has_data
+      - seated_sec
+      - normal_sec
+      - abnormal_sec
+      - unknown_sec
+      - judged_sec
+      - sessions
+      - max_continuous_sec
+      - collapse
+      - postures
+      - postures_raw
+      - lean_balance
+      - distance
+      title: DailyReport
+      description: 일간 리포트
     Deltas:
       properties:
         neck_drop:
@@ -685,6 +975,41 @@ components:
       type: object
       title: Deltas
       description: 기준 자세 대비 변화량. 카메라 미인식·기준값 없음이면 null
+    DistanceCompare:
+      properties:
+        this_week:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: This Week
+          description: 이번 주 화면 거리 평균 (mm)
+        last_week:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Last Week
+        change:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Change
+      type: object
+      title: DistanceCompare
+    DistanceDay:
+      properties:
+        avg_mm:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Avg Mm
+        closer_sec:
+          type: number
+          title: Closer Sec
+          description: 기준보다 10cm 이상 가까웠던 시간
+      type: object
+      required:
+      - closer_sec
+      title: DistanceDay
     DistanceLevel:
       type: string
       enum:
@@ -743,6 +1068,167 @@ components:
       - detail
       title: ErrorResponse
       description: 오류 응답 (409 상태 충돌, 422 잘못된 값)
+    GoalCard:
+      properties:
+        goal:
+          type: string
+          title: Goal
+          description: cross / forward_head / lean / long_sitting
+        label:
+          type: string
+          title: Label
+        selected:
+          type: boolean
+          title: Selected
+        unit:
+          type: string
+          title: Unit
+          description: sec
+        today:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Today
+        yesterday:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Yesterday
+        change:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Change
+        last_week_avg:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Last Week Avg
+          description: 지난 달력주(월~일) 기록 있는 날 평균
+        last_week_days:
+          type: integer
+          title: Last Week Days
+        last7:
+          items:
+            $ref: '#/components/schemas/GoalDay'
+          type: array
+          title: Last7
+          description: 최근 7일 (오래된 날부터, 마지막이 기준 날짜)
+        trend:
+          $ref: '#/components/schemas/GoalTrend'
+        main_direction:
+          anyOf:
+          - $ref: '#/components/schemas/MainDirection'
+          - type: 'null'
+          description: 최근 7일 좌우 합 (다리 꼬기·기대기만)
+      type: object
+      required:
+      - goal
+      - label
+      - selected
+      - unit
+      - last_week_days
+      - last7
+      - trend
+      title: GoalCard
+    GoalDay:
+      properties:
+        date:
+          type: string
+          title: Date
+        value:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Value
+          description: 기록 없는 날은 null
+        has_data:
+          type: boolean
+          title: Has Data
+      type: object
+      required:
+      - date
+      - has_data
+      title: GoalDay
+    GoalToday:
+      properties:
+        goal:
+          type: string
+          title: Goal
+          description: cross / forward_head / lean / long_sitting
+        label:
+          type: string
+          title: Label
+        selected:
+          type: boolean
+          title: Selected
+          description: 설정에서 고른 목표인지 (선택 저장은 ⑤)
+        today:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Today
+          description: 오늘 값 (초). long_sitting은 하루 최대 연속 착석. 기록 없으면 null
+        yesterday:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Yesterday
+          description: 어제 값. 어제 기록이 없으면 null
+        change:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Change
+          description: 오늘 − 어제
+      type: object
+      required:
+      - goal
+      - label
+      - selected
+      title: GoalToday
+    GoalTrend:
+      properties:
+        direction:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Direction
+          description: decreasing / increasing / flat (하루 1분 미만 변화). 기록 2일 미만이면 null
+        slope_min_per_day:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Slope Min Per Day
+          description: 최근 7일 직선 기울기 (분/일)
+        days:
+          type: integer
+          title: Days
+      type: object
+      required:
+      - days
+      title: GoalTrend
+    GoalsReport:
+      properties:
+        date:
+          type: string
+          title: Date
+        as_of:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: As Of
+        goals:
+          items:
+            $ref: '#/components/schemas/GoalCard'
+          type: array
+          title: Goals
+      type: object
+      required:
+      - date
+      - goals
+      title: GoalsReport
+      description: 목표 / 피드백 카드 — 4종 모두 (모두 겹치지 않는 값 기준)
     HTTPValidationError:
       properties:
         detail:
@@ -807,6 +1293,187 @@ components:
       - distance_mm
       - distance_level
       title: HistoryItem
+    HomeReport:
+      properties:
+        date:
+          type: string
+          title: Date
+        source:
+          type: string
+          title: Source
+          description: summary(자정 요약) / live(실시간 계산)
+        has_data:
+          type: boolean
+          title: Has Data
+          description: 착석 시간이 있는지
+        as_of:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: As Of
+          description: 마지막 저장 시각 — 오늘 값은 최대 1분 늦음
+        seated_sec:
+          type: number
+          title: Seated Sec
+          description: 총 착석 (unknown 포함)
+        normal_sec:
+          type: number
+          title: Normal Sec
+        abnormal_sec:
+          type: number
+          title: Abnormal Sec
+        unknown_sec:
+          type: number
+          title: Unknown Sec
+        judged_sec:
+          type: number
+          title: Judged Sec
+          description: 착석 − unknown
+        normal_ratio:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Normal Ratio
+          description: 정상 ÷ (착석 − unknown). 분모가 0이면 null
+        daily_posture:
+          anyOf:
+          - $ref: '#/components/schemas/PostureShare'
+          - type: 'null'
+          description: '하루 평균 자세: 겹치지 않는 자세별 누적 중 정상 제외 최대 (없으면 normal)'
+        lean_balance:
+          $ref: '#/components/schemas/LeanBalance'
+        goals:
+          items:
+            $ref: '#/components/schemas/GoalToday'
+          type: array
+          title: Goals
+          description: 목표 4종 (selected로 고른 것 표시)
+      type: object
+      required:
+      - date
+      - source
+      - has_data
+      - seated_sec
+      - normal_sec
+      - abnormal_sec
+      - unknown_sec
+      - judged_sec
+      - lean_balance
+      - goals
+      title: HomeReport
+      description: 홈 화면 요약
+    HourStat:
+      properties:
+        hour:
+          type: integer
+          title: Hour
+        seated_sec:
+          type: number
+          title: Seated Sec
+        judged_sec:
+          type: number
+          title: Judged Sec
+        abnormal_sec:
+          type: number
+          title: Abnormal Sec
+        abnormal_ratio:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Abnormal Ratio
+          description: 비정상 ÷ 판단 시간
+      type: object
+      required:
+      - hour
+      - seated_sec
+      - judged_sec
+      - abnormal_sec
+      title: HourStat
+    LastWeek:
+      properties:
+        start:
+          type: string
+          title: Start
+        normal_ratio:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Normal Ratio
+      type: object
+      required:
+      - start
+      title: LastWeek
+    Layout:
+      properties:
+        layout_id:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Layout Id
+          description: DB 없이 켠 서버면 null
+        n_channels:
+          type: integer
+          title: N Channels
+        channel_map:
+          items:
+            type: integer
+          type: array
+          title: Channel Map
+          description: 읽는 MCP3008 채널 (순서 = /current의 pressure, pressure_ratio)
+        positions:
+          items:
+            items:
+              type: number
+            type: array
+          type: array
+          title: Positions
+          description: 채널별 [x, y]. x 왼쪽 -1 ~ 오른쪽 +1, y 뒤 -1 ~ 앞 +1 (사람 기준)
+      type: object
+      required:
+      - n_channels
+      - channel_map
+      - positions
+      title: Layout
+      description: 센서 배치 — 거의 바뀌지 않으니 한 번 받아 두고, layout_id가 바뀌면 다시 받는다
+    LeanBalance:
+      properties:
+        left_sec:
+          type: number
+          title: Left Sec
+        right_sec:
+          type: number
+          title: Right Sec
+        right_ratio:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Right Ratio
+          description: 오른쪽 ÷ (왼쪽 + 오른쪽). 편향이 없으면 null
+      type: object
+      required:
+      - left_sec
+      - right_sec
+      title: LeanBalance
+      description: 좌우 체중 편향 (겹치지 않는 값). 홈의 '오른쪽 편향 비율'이 어느 쪽인지는 앱 담당 확인 중이라 둘 다 준다
+    MainDirection:
+      properties:
+        direction:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Direction
+          description: 'left / right (다리 꼬기: 왼다리/오른다리 위). 같으면 null'
+        left_sec:
+          type: number
+          title: Left Sec
+        right_sec:
+          type: number
+          title: Right Sec
+      type: object
+      required:
+      - left_sec
+      - right_sec
+      title: MainDirection
     Pending:
       properties:
         kind:
@@ -841,6 +1508,26 @@ components:
       - x
       - y
       title: Point
+    PostureShare:
+      properties:
+        posture:
+          type: string
+          title: Posture
+          description: 자세 이름 (forward_head, cross_left, …, normal)
+        seconds:
+          type: number
+          title: Seconds
+        ratio:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Ratio
+          description: 그 시간 ÷ (착석 − unknown)
+      type: object
+      required:
+      - posture
+      - seconds
+      title: PostureShare
     PostureStatus:
       type: string
       enum:
@@ -1295,6 +1982,41 @@ components:
       - baseline_ready
       - sensors
       title: Status
+    TiltCompare:
+      properties:
+        this_week:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: This Week
+          description: 이번 주 하루 평균 (기록 있는 날만)
+        last_week:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Last Week
+        change:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Change
+        days_this:
+          type: integer
+          title: Days This
+        days_last:
+          type: integer
+          title: Days Last
+        direction:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Direction
+          description: 이번 주 주된 기울기 방향 (left/right). 같거나 없으면 null
+      type: object
+      required:
+      - days_this
+      - days_last
+      title: TiltCompare
     TiltState:
       type: string
       enum:
@@ -1406,3 +2128,154 @@ components:
       - msg
       - type
       title: ValidationError
+    WeekCompare:
+      properties:
+        this_week:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: This Week
+          description: 이번 주 하루 평균 (기록 있는 날만)
+        last_week:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Last Week
+        change:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Change
+        days_this:
+          type: integer
+          title: Days This
+        days_last:
+          type: integer
+          title: Days Last
+      type: object
+      required:
+      - days_this
+      - days_last
+      title: WeekCompare
+    WeekDay:
+      properties:
+        date:
+          type: string
+          title: Date
+        weekday:
+          type: integer
+          title: Weekday
+          description: 0 월 ~ 6 일
+        has_data:
+          type: boolean
+          title: Has Data
+        source:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source
+        seated_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Seated Sec
+          description: 미래 날짜면 null
+        normal_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Normal Sec
+        other_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Other Sec
+          description: 착석 − 정상 (비정상 + unknown)
+      type: object
+      required:
+      - date
+      - weekday
+      - has_data
+      title: WeekDay
+    WeeklyCompare:
+      properties:
+        forward_head:
+          $ref: '#/components/schemas/WeekCompare'
+        cross:
+          $ref: '#/components/schemas/WeekCompare'
+        tilt_direction:
+          $ref: '#/components/schemas/TiltCompare'
+        max_continuous:
+          $ref: '#/components/schemas/WeekCompare'
+        distance_mm:
+          $ref: '#/components/schemas/DistanceCompare'
+      type: object
+      required:
+      - forward_head
+      - cross
+      - tilt_direction
+      - max_continuous
+      - distance_mm
+      title: WeeklyCompare
+    WeeklyReport:
+      properties:
+        start:
+          type: string
+          title: Start
+          description: 그 주 월요일
+        end:
+          type: string
+          title: End
+        requested_start:
+          type: string
+          title: Requested Start
+          description: 요청한 날짜 (월요일이 아니면 그 주 월요일로 맞춤)
+        as_of:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: As Of
+        normal_ratio:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Normal Ratio
+          description: 7일 정상 합 ÷ 7일 (착석 − unknown) 합
+        last_week:
+          $ref: '#/components/schemas/LastWeek'
+        delta_pp:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Delta Pp
+          description: 지난주 대비 %p
+        days:
+          items:
+            $ref: '#/components/schemas/WeekDay'
+          type: array
+          title: Days
+        compare:
+          $ref: '#/components/schemas/WeeklyCompare'
+        hourly:
+          items:
+            $ref: '#/components/schemas/HourStat'
+          type: array
+          title: Hourly
+          description: 이번 주 시간대별 (0~23시)
+        worst_hour:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Worst Hour
+          description: 판단 시간 10분 이상인 시간대 중 비정상 비율이 가장 높은 시각
+      type: object
+      required:
+      - start
+      - end
+      - requested_start
+      - last_week
+      - days
+      - compare
+      - hourly
+      title: WeeklyReport
+      description: 주간 리포트 (월~일)

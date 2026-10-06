@@ -293,6 +293,184 @@ class RecordsResetResult(BaseModel):
     resync_required: bool = Field(..., description="true — 시각 동기화를 지웠으니 POST /time/sync를 다시 보내야 함")
 
 
+class PostureShare(BaseModel):
+    posture: str = Field(..., description="자세 이름 (forward_head, cross_left, …, normal)")
+    seconds: float
+    ratio: float | None = Field(None, description="그 시간 ÷ (착석 − unknown)")
+
+
+class LeanBalance(BaseModel):
+    """좌우 체중 편향 (겹치지 않는 값). 홈의 '오른쪽 편향 비율'이 어느 쪽인지는 앱 담당 확인 중이라 둘 다 준다"""
+    left_sec: float
+    right_sec: float
+    right_ratio: float | None = Field(None, description="오른쪽 ÷ (왼쪽 + 오른쪽). 편향이 없으면 null")
+
+
+class GoalToday(BaseModel):
+    goal: str = Field(..., description="cross / forward_head / lean / long_sitting")
+    label: str
+    selected: bool = Field(..., description="설정에서 고른 목표인지 (선택 저장은 ⑤)")
+    today: float | None = Field(None, description="오늘 값 (초). long_sitting은 하루 최대 연속 착석. 기록 없으면 null")
+    yesterday: float | None = Field(None, description="어제 값. 어제 기록이 없으면 null")
+    change: float | None = Field(None, description="오늘 − 어제")
+
+
+class ReportBase(BaseModel):
+    date: str
+    source: str = Field(..., description="summary(자정 요약) / live(실시간 계산)")
+    has_data: bool = Field(..., description="착석 시간이 있는지")
+    as_of: float | None = Field(None, description="마지막 저장 시각 — 오늘 값은 최대 1분 늦음")
+    seated_sec: float = Field(..., description="총 착석 (unknown 포함)")
+    normal_sec: float
+    abnormal_sec: float
+    unknown_sec: float
+    judged_sec: float = Field(..., description="착석 − unknown")
+    normal_ratio: float | None = Field(None, description="정상 ÷ (착석 − unknown). 분모가 0이면 null")
+
+
+class HomeReport(ReportBase):
+    """홈 화면 요약"""
+    daily_posture: PostureShare | None = Field(
+        None, description="하루 평균 자세: 겹치지 않는 자세별 누적 중 정상 제외 최대 (없으면 normal)")
+    lean_balance: LeanBalance
+    goals: list[GoalToday] = Field(..., description="목표 4종 (selected로 고른 것 표시)")
+
+
+class Collapse(BaseModel):
+    avg_sec: float | None = Field(None, description="자세 무너짐: 착석 시작 → 첫 비정상 확정 평균 (그날 시작한 구간, null 제외)")
+    count: int = Field(..., description="평균에 들어간 구간 수")
+    segments: int = Field(..., description="그날 시작한 착석 구간 수")
+
+
+class DistanceDay(BaseModel):
+    avg_mm: float | None = None
+    closer_sec: float = Field(..., description="기준보다 10cm 이상 가까웠던 시간")
+
+
+class DailyReport(ReportBase):
+    """일간 리포트"""
+    sessions: int = Field(..., description="그날에 걸친 세션 수 (측정했지만 앉지 않은 날 구분용)")
+    max_continuous_sec: float = Field(..., description="최대 연속 착석 (자정에서 자름)")
+    collapse: Collapse
+    postures: dict[str, float] = Field(..., description="자세별 누적 (겹치지 않음): normal + 7개 자세")
+    postures_raw: dict[str, float] = Field(..., description="겹치는 원래 값 (참고)")
+    lean_balance: LeanBalance
+    distance: DistanceDay
+    top_habit: PostureShare | None = Field(None, description="가장 많이 나타난 습관 (정상 제외 최대). 없으면 null")
+
+
+class WeekDay(BaseModel):
+    date: str
+    weekday: int = Field(..., description="0 월 ~ 6 일")
+    has_data: bool
+    source: str | None = None
+    seated_sec: float | None = Field(None, description="미래 날짜면 null")
+    normal_sec: float | None = None
+    other_sec: float | None = Field(None, description="착석 − 정상 (비정상 + unknown)")
+
+
+class WeekCompare(BaseModel):
+    this_week: float | None = Field(None, description="이번 주 하루 평균 (기록 있는 날만)")
+    last_week: float | None = None
+    change: float | None = None
+    days_this: int
+    days_last: int
+
+
+class TiltCompare(WeekCompare):
+    direction: str | None = Field(None, description="이번 주 주된 기울기 방향 (left/right). 같거나 없으면 null")
+
+
+class DistanceCompare(BaseModel):
+    this_week: float | None = Field(None, description="이번 주 화면 거리 평균 (mm)")
+    last_week: float | None = None
+    change: float | None = None
+
+
+class WeeklyCompare(BaseModel):
+    forward_head: WeekCompare
+    cross: WeekCompare
+    tilt_direction: TiltCompare
+    max_continuous: WeekCompare
+    distance_mm: DistanceCompare
+
+
+class HourStat(BaseModel):
+    hour: int
+    seated_sec: float
+    judged_sec: float
+    abnormal_sec: float
+    abnormal_ratio: float | None = Field(None, description="비정상 ÷ 판단 시간")
+
+
+class LastWeek(BaseModel):
+    start: str
+    normal_ratio: float | None = None
+
+
+class WeeklyReport(BaseModel):
+    """주간 리포트 (월~일)"""
+    start: str = Field(..., description="그 주 월요일")
+    end: str
+    requested_start: str = Field(..., description="요청한 날짜 (월요일이 아니면 그 주 월요일로 맞춤)")
+    as_of: float | None = None
+    normal_ratio: float | None = Field(None, description="7일 정상 합 ÷ 7일 (착석 − unknown) 합")
+    last_week: LastWeek
+    delta_pp: float | None = Field(None, description="지난주 대비 %p")
+    days: list[WeekDay]
+    compare: WeeklyCompare
+    hourly: list[HourStat] = Field(..., description="이번 주 시간대별 (0~23시)")
+    worst_hour: int | None = Field(None, description="판단 시간 10분 이상인 시간대 중 비정상 비율이 가장 높은 시각")
+
+
+class GoalDay(BaseModel):
+    date: str
+    value: float | None = Field(None, description="기록 없는 날은 null")
+    has_data: bool
+
+
+class GoalTrend(BaseModel):
+    direction: str | None = Field(None, description="decreasing / increasing / flat (하루 1분 미만 변화). 기록 2일 미만이면 null")
+    slope_min_per_day: float | None = Field(None, description="최근 7일 직선 기울기 (분/일)")
+    days: int
+
+
+class MainDirection(BaseModel):
+    direction: str | None = Field(None, description="left / right (다리 꼬기: 왼다리/오른다리 위). 같으면 null")
+    left_sec: float
+    right_sec: float
+
+
+class GoalCard(BaseModel):
+    goal: str = Field(..., description="cross / forward_head / lean / long_sitting")
+    label: str
+    selected: bool
+    unit: str = Field(..., description="sec")
+    today: float | None = None
+    yesterday: float | None = None
+    change: float | None = None
+    last_week_avg: float | None = Field(None, description="지난 달력주(월~일) 기록 있는 날 평균")
+    last_week_days: int
+    last7: list[GoalDay] = Field(..., description="최근 7일 (오래된 날부터, 마지막이 기준 날짜)")
+    trend: GoalTrend
+    main_direction: MainDirection | None = Field(None, description="최근 7일 좌우 합 (다리 꼬기·기대기만)")
+
+
+class GoalsReport(BaseModel):
+    """목표 / 피드백 카드 — 4종 모두 (모두 겹치지 않는 값 기준)"""
+    date: str
+    as_of: float | None = None
+    goals: list[GoalCard]
+
+
+class Layout(BaseModel):
+    """센서 배치 — 거의 바뀌지 않으니 한 번 받아 두고, layout_id가 바뀌면 다시 받는다"""
+    layout_id: int | None = Field(None, description="DB 없이 켠 서버면 null")
+    n_channels: int
+    channel_map: list[int] = Field(..., description="읽는 MCP3008 채널 (순서 = /current의 pressure, pressure_ratio)")
+    positions: list[list[float]] = Field(..., description="채널별 [x, y]. x 왼쪽 -1 ~ 오른쪽 +1, y 뒤 -1 ~ 앞 +1 (사람 기준)")
+
+
 class ScenarioStep(BaseModel):
     seconds: float
     phase: str

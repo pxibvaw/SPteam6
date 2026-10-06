@@ -38,13 +38,14 @@ from hardware.mock.generator import ScenarioPlayer
 from hardware.mock.scenarios import SCENARIOS, Scenario, Step, get_scenario
 from hardware.server.clock import AppClock, ClockError
 from hardware.server.db.jobs import DayJobs
+from hardware.server.db.reports import ReportError, Reports
 from hardware.server.db.store import DEFAULT_SETTINGS, Recorder
 from hardware.server.mock_engine import BaselineValue, MockEngine
 from hardware.server.power import PowerPolicy
 from hardware.server.schemas import (
-    API_VERSION, Baseline, CalibrateResult, Current, ErrorResponse, History, RecordsReset,
-    RecordsResetResult, ScenarioInfo, ScenarioSelect, Seating, SeatingSegments, SessionStatus, Status,
-    TimeStatus, TimeSync,
+    API_VERSION, Baseline, CalibrateResult, Current, DailyReport, ErrorResponse, GoalsReport, History,
+    HomeReport, Layout, RecordsReset, RecordsResetResult, ScenarioInfo, ScenarioSelect, Seating,
+    SeatingSegments, SessionStatus, Status, TimeStatus, TimeSync, WeeklyReport,
 )
 from hardware.server.seating import is_empty
 from hardware.server.session import SessionController, SessionError, SessionState
@@ -378,6 +379,7 @@ def scenario_info(s: Scenario) -> dict:
 
 ERRORS = {409: {"model": ErrorResponse, "description": "지금 상태에서 할 수 없음 (detail.code 참고)"},
           422: {"model": ErrorResponse, "description": "잘못된 값 (detail.code 참고)"}}
+REPORT_ERRORS = {**ERRORS, 503: {"model": ErrorResponse, "description": "DB 없이 켠 서버 (NO_DB)"}}
 
 
 def create_app(cfg: dict, scenario: str = "demo", loop: bool = True, seed: int | None = None,
@@ -392,6 +394,16 @@ def create_app(cfg: dict, scenario: str = "demo", loop: bool = True, seed: int |
         raise HTTPException(status, detail={"code": code, "message": message,
                                             "resync_required": not runtime.clock.synced,
                                             "boot_id": runtime.clock.boot_id, **extra})
+
+    reports = Reports(runtime.recorder.path, runtime.clock) if runtime.recorder else None   # 읽기 전용 연결
+
+    def report_call(name: str, *args) -> dict:
+        if reports is None:
+            fail(503, "NO_DB", "DB 없이(--no-db) 켠 서버라 리포트가 없음")
+        try:
+            return getattr(reports, name)(*args)
+        except ReportError as e:
+            fail(e.status, e.code, str(e))
 
     def session_call(fn) -> dict:
         try:
@@ -530,6 +542,35 @@ def create_app(cfg: dict, scenario: str = "demo", loop: bool = True, seed: int |
               summary="정지: 세션 끝, 센서 모두 끔 (앉아도 자동으로 다시 시작하지 않음)")
     def session_stop():
         return session_call(runtime.stop_session)
+
+    @app.get("/reports/home", response_model=HomeReport, tags=["리포트"], responses=REPORT_ERRORS,
+             summary="홈 요약: 정상 비율·총 착석·하루 평균 자세·좌우 편향·목표 4종 오늘/어제")
+    def report_home(date: str | None = Query(None, description="YYYY-MM-DD (기본 오늘, 한국 시간)")):
+        return report_call("home", date)
+
+    @app.get("/reports/daily", response_model=DailyReport, tags=["리포트"], responses=REPORT_ERRORS,
+             summary="일간 리포트 (지난 날은 자정 요약, 오늘은 실시간)")
+    def report_daily(date: str = Query(..., description="YYYY-MM-DD (한국 시간)")):
+        return report_call("daily", date)
+
+    @app.get("/reports/weekly", response_model=WeeklyReport, tags=["리포트"], responses=REPORT_ERRORS,
+             summary="주간 리포트 (월~일, 지난주 비교, 시간대별 패턴)")
+    def report_weekly(start: str = Query(..., description="그 주의 아무 날 YYYY-MM-DD (월요일로 맞춤)")):
+        return report_call("weekly", start)
+
+    @app.get("/reports/goals", response_model=GoalsReport, tags=["리포트"], responses=REPORT_ERRORS,
+             summary="목표·피드백 카드 4종 (오늘·어제·지난주 평균·최근 7일·추세·주된 방향)")
+    def report_goals(date: str | None = Query(None, description="YYYY-MM-DD (기본 오늘)")):
+        return report_call("goals", date)
+
+    @app.get("/layout", response_model=Layout, tags=["기기"],
+             summary="센서 배치 (채널별 위치). /current의 pressure·pressure_ratio 순서와 같음")
+    def layout():
+        if reports is not None:
+            return reports.layout(runtime.recorder.layout_id)
+        pr = cfg["pressure"]
+        return {"layout_id": None, "n_channels": pr["n_channels"],
+                "channel_map": pr.get("channels", list(range(pr["n_channels"]))), "positions": pr["positions"]}
 
     @app.post("/records/reset", response_model=RecordsResetResult, tags=["기록"], responses=ERRORS,
               summary="기록 초기화 (설정·기준 자세는 유지). 세션이 없을 때만, 확인 문구 필요")
