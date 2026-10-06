@@ -49,6 +49,27 @@ def is_empty(values) -> bool:
     return not values or sum(max(v, 0) for v in values) < EMPTY_TOTAL_ADC
 
 
+# 대표 자세 우선순위 (앞일수록 우선) — 판단 엔진·하루 요약·더미 데이터가 모두 이것을 쓴다.
+# 바꾸면 hardware/server/db/summary.py의 CALC_VERSION을 올려서 지난 요약을 다시 계산한다.
+PRIORITY = ("forward_head", "cross", "lean", "tilt")
+
+
+def priority_rank(posture: str) -> int:
+    return next(i for i, k in enumerate(PRIORITY) if posture.startswith(k))
+
+
+def postures_of(seat: str, head: str, tilt: str) -> list[str]:
+    """좌면·목·기울기 상태 → 나쁜 자세 이름 목록 (우선순위 순서, [0]이 대표)"""
+    found = []
+    if head == "forward":
+        found.append("forward_head")
+    if seat.startswith("cross_") or seat.startswith("lean_"):
+        found.append(seat)
+    if tilt in ("left", "right"):
+        found.append(f"tilt_{tilt}")
+    return sorted(found, key=priority_rank)
+
+
 def classify(seat: str, head: str, tilt: str, postures: list[str]) -> tuple[PostureStatus, str]:
     """(normal/abnormal/unknown, 대표 자세). postures는 우선순위 순서"""
     if postures:

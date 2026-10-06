@@ -43,7 +43,7 @@ python main.py --mode replay --file data/synthetic/mock_demo.csv                
 | 다시 앉음 | 카메라·거리 다시 켜짐. 카메라는 약 2초 동안 `pose_detected=0` |
 
 - 다리 꼬기와 체중 편향이 함께면 `seat` 라벨은 우선순위가 높은 `cross_*`, 체중 편향은 압력 모양과 JSON에만.
-- 대표 자세 우선순위: 거북목 > 다리 꼬기 > 체중 편향 > 기울어진 자세.
+- 대표 자세 우선순위: 거북목 > 다리 꼬기 > 체중 편향 > 기울어진 자세 (`hardware/server/seating.py`의 `PRIORITY`를 같이 씀).
 - 세션 JSON의 `extra.expected`에 정답이 있다: 구간별 라벨·대표 자세·센서 오류(`steps`),
   착석 구간(`segments`), 카메라·거리 꺼진 구간(`sensors_off`).
 
@@ -78,7 +78,7 @@ pressure:
 distance:
   sensor: hc-sr04     # I2C 항목 대신 trig/echo GPIO 핀 설정 필요
 thresholds:
-  empty_off_sec: 5    # 자리 비움이 이만큼 이어지면 착석 구간 종료 (지금은 generator.py 기본값)
+  empty_off_sec: 5    # 자리 비움이 이만큼 이어지면 착석 구간 종료 (지금은 hardware/server/seating.py의 EMPTY_END_SEC)
 ```
 - `docs/data_format.md`: "총 47칸", "p0 ~ p7", "FSR 406 × 8" → 채널 수에 따라 달라진다고 표기
 - `common/sensors_base.py`·`common/recorder.py`의 "× 8", "8개 중" 주석

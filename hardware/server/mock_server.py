@@ -37,6 +37,7 @@ from common.sensors_base import SampleSkipped
 from hardware.mock.generator import ScenarioPlayer
 from hardware.mock.scenarios import SCENARIOS, Scenario, Step, get_scenario
 from hardware.server.clock import AppClock, ClockError
+from hardware.server.db.jobs import DayJobs
 from hardware.server.db.store import DEFAULT_SETTINGS, Recorder
 from hardware.server.mock_engine import BaselineValue, MockEngine
 from hardware.server.power import PowerPolicy
@@ -75,6 +76,7 @@ class MockRuntime:
         self.end_reason: str | None = None      # 마지막 세션이 끝난 이유
         self._pending_stop: str | None = None   # 판단 도중 정해진 정지 (기준 자세 실패)
         self.recorder = Recorder(db_path, cfg, self.clock) if db_path else None
+        self.jobs = DayJobs(self.recorder.conn, self.clock, self.recorder) if self.recorder else None   # 자정 요약·원본 삭제
         self.settings = self.recorder.settings() if self.recorder else dict(DEFAULT_SETTINGS)
         self.session_settings: dict = {}
         self.current_baseline: BaselineValue | None = None
@@ -234,9 +236,12 @@ class MockRuntime:
     def sync_time(self, app_time: float, timezone_name: str) -> dict:
         with self.lock:
             in_session = self.session.state is not SessionState.IDLE
+            first = not self.clock.synced
             change = self.clock.sync(app_time, timezone_name, in_session=in_session)
             if self.recorder and change["applied"] and change["offset_change_sec"] is not None:
                 self.recorder.event("time_sync", self.clock.now(), {"offset_change_sec": change["offset_change_sec"]})
+            if first and self.jobs:                     # 켠 뒤 첫 동기화: 밀린 날짜 바로 처리 (catch-up)
+                self.jobs.run(self.clock.now())
             return change
 
     def reset_records(self) -> dict[str, int]:
@@ -309,6 +314,8 @@ class MockRuntime:
             ts = self.clock.now()
             if ts is None:
                 return                                  # 동기화 전: 기록 없음
+            if self.jobs:
+                self.jobs.maybe_run(ts)                 # 1분마다: 지난 날 요약·확인, 30분 뒤 원본 삭제
             state = self.session.state.value
             cal = self.cal_engine if state == SessionState.IDLE.value and self.calibrating else None
             eng = cal or self.engine

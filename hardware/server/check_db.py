@@ -24,7 +24,7 @@ from hardware.mock.scenarios import Step
 from hardware.server.check_seating import with_channels
 from hardware.server.check_session import KST, Checker, FakeTime, code
 from hardware.server.clock import AppClock
-from hardware.server.db.migrate import migrate
+from hardware.server.db.migrate import latest_version, migrate
 from hardware.server.db.store import unpack_chunk
 from hardware.server.mock_server import create_app
 
@@ -94,8 +94,8 @@ def main() -> int:
         env = Env(cfg, ft, db)
         tables = [r[0] for r in env.q("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
         check("테이블 13개", len(tables) == 13, len(tables))
-        check("user_version 1, WAL, auto_vacuum=incremental",
-              env.one("PRAGMA user_version") == 1 and env.one("PRAGMA journal_mode") == "wal"
+        check(f"user_version {latest_version()} (최신), WAL, auto_vacuum=incremental",
+              env.one("PRAGMA user_version") == latest_version() and env.one("PRAGMA journal_mode") == "wal"
               and env.one("PRAGMA auto_vacuum") == 2, f"{env.one('PRAGMA user_version')}, "
               f"{env.one('PRAGMA journal_mode')}, {env.one('PRAGMA auto_vacuum')}")
         check("설정 기본값 7개", env.one("SELECT COUNT(*) FROM settings") == 7,

@@ -1,6 +1,7 @@
 # hardware/server — 앱 API (mock 서버) · 더미 데이터
 
-> **상태: 초안 v0.1 (하드웨어 담당, 팀 확인 전).** 앱에 보여줄 정보가 정리되면 리포트 API를 추가한다.
+> **상태: 초안 v0.1 (하드웨어 담당, 팀 확인 전).** 시각 동기화·세션·SQLite 저장·자정 요약까지 구현.
+> 리포트(홈·일간·주간·목표) 읽기 API는 다음 단계(④), 설정·알림·기기 상태는 ⑤.
 > 실물 센서가 없어서 지금은 **시나리오 더미 데이터 + 가짜 판단**으로 돌아간다.
 
 ```
@@ -8,6 +9,8 @@
    │  ScenarioPlayer: 라벨 → 센서 값 (hardware/mock/models.py) + 센서 오류·카메라 5fps·자리 비움 때 센서 끄기
    ├─▶ replay CSV (data/synthetic/mock_*.csv, 수집 CSV와 같은 형식)  → main.py --mode replay
    └─▶ mock 서버 10Hz ─▶ 가짜 판단 (mock_engine.py) ─▶ FastAPI ──(같은 Wi-Fi, JSON)──▶ 안드로이드 앱
+                          │
+                          └─▶ SQLite (db/store.py) ─▶ 자정 요약·원본 삭제 (db/jobs.py, db/summary.py)
 ```
 
 ## 파일
@@ -24,8 +27,8 @@
 | `power.py` | 센서 전원 정책 (세션 상태 + 착석 구간 → 압력·카메라·거리 켜고 끄기) |
 | `seating.py` | 착석 구간 (자리 비움 5초, 정상/비정상/unknown) |
 | `../sensors/power.py` | 센서 전원 인터페이스 `Switchable` (실제 센서 클래스가 구현) + mock용 `SimulatedSwitch` |
-| `db/` | SQLite: `connection.py`(WAL 등 설정), `migrate.py`(스키마 버전), `migrations/001_init.sql`(테이블 13개), `store.py`(저장 경로 `Recorder`). 설계는 [`../docs/db_design.md`](../docs/db_design.md) |
-| `check_seating.py`, `check_session.py`, `check_db.py` | 확인 도구 (가상 시각으로 시나리오·API 흐름·DB 저장 시험) |
+| `db/` | SQLite: `connection.py`(WAL 등 설정), `migrate.py`(스키마 버전), `migrations/`(001 테이블 13개, 002 다시 계산 표시), `store.py`(저장 경로 `Recorder`), `summary.py`(하루 요약 계산·다시 계산 명령어), `jobs.py`(자정 작업). 설계는 [`../docs/db_design.md`](../docs/db_design.md) |
+| `check_seating.py`, `check_session.py`, `check_db.py`, `check_summary.py` | 확인 도구 (가상 시각으로 시나리오·API 흐름·DB 저장·자정 요약 시험) |
 | `openapi.yaml` | API 명세 (자동 생성 — 직접 고치지 않기). 안드로이드 Retrofit 코드 생성 등에 사용 |
 
 ## 실행
@@ -45,7 +48,9 @@ python -m hardware.server.mock_server                    # 실제처럼: 앱이 
 python -m hardware.server.mock_server --scenario forward_head --no-loop --autostart
 python -m hardware.server.mock_server --no-db            # DB에 저장하지 않음 (기본: data/synthetic/sitsense_mock.db)
 python -m hardware.server.check_session                  # 시각·세션·센서 전원 흐름 확인 (47개)
-python -m hardware.server.check_db                       # DB 저장 확인 (41개, 임시 폴더에 DB를 만들고 지움)
+python -m hardware.server.check_db                       # DB 저장 확인 (52개, 임시 폴더에 DB를 만들고 지움)
+python -m hardware.server.check_summary                  # 자정 요약·원본 삭제 확인 (32개)
+python -m hardware.server.db.summary --db data/synthetic/sitsense_mock.db --recompute --all   # 하루 요약 다시 계산
 python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 뒤 openapi.yaml 다시 만들기
 ```
 
@@ -79,7 +84,8 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 - 시각 `time.time()` 초, 거리 mm, 각도 °, 비율 0~1. **"52cm" 같은 표시 글자는 앱이 만든다**
 - 판단할 수 없는 값은 `null` (카메라 미인식이면 `deltas`가 null, 목·기울기는 `unknown`)
 - **영상 이미지는 어떤 응답에도 없다.** 카메라는 상체 점 좌표(0~1 비율)만
-- `postures` 순서 = 대표 자세 우선순위: **거북목 > 다리 꼬기 > 체중 편향 > 기울어진 자세** (`postures[0]`이 대표)
+- `postures` 순서 = 대표 자세 우선순위: **거북목 > 다리 꼬기 > 체중 편향 > 기울어진 자세** (`postures[0]`이 대표).
+  우선순위는 `seating.PRIORITY` 한 곳에서 관리한다 (판단·하루 요약·더미 데이터가 같이 씀)
 
 ### 착석 구간 (`seating.py`)
 
@@ -94,7 +100,8 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 
 - ⚠️ `EMPTY_TOTAL_ADC = 50`은 임시값이다. 실물 FSR로 빈 의자와 앉았을 때 압력 합을 재서 다시 맞춰야 한다 (AI 코드와 같이 바꿀 것).
 - `/current`의 `seated`·`sitting_since`는 예전처럼 3초 필터를 따른다 (형식 유지). **착석 시간은 `/seating` 기준으로 쓴다.**
-- 끝난 구간은 지금은 서버 메모리에만 있다 (재시작하면 사라짐). DB 저장·자정 처리·앱 시각 동기화는 다음 단계.
+- 끝난 구간은 SQLite(`seating_segments`)에도 저장된다. `/seating/segments`는 지금 서버 메모리 기준(재시작하면 비어 있음)이고,
+  DB에서 읽는 리포트 API는 ④에서 만든다.
 - 확인: `python -m hardware.server.check_seating` (22개 시나리오 × 8·6채널, 정답과 비교)
 
 ### 시각 동기화 · 세션 · 센서 전원
@@ -114,16 +121,19 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
   성공한 기준이 한 번도 없으면 세션을 멈춘다 (`state: idle`, `end_reason: baseline_failed`).
 - **저장:** 세션·구간·기준 자세는 즉시, 시간대별 시간·거리·원본은 1분마다 한 번에 SQLite에 쓴다.
   서버가 정지 없이 꺼지면 다음에 켤 때 열린 세션·구간을 마지막 저장 시각에 `crash`로 닫는다 (최대 1분 손실).
+- **자정 작업:** 1분마다(그리고 켠 뒤 첫 동기화 직후) 지난 날을 오래된 날부터 요약 → 다시 읽어 확인 →
+  30분 뒤 그날 원본 삭제. 요약은 시간대별 표·착석 구간에서만 계산해서 원본이 지워져도 다시 계산할 수 있다.
+  며칠 꺼져 있었으면 켠 뒤 밀린 날짜를 처리한다(catch-up). 자세한 규칙은 `../docs/db_design.md` 5장.
 - **오류:** `{"detail": {"code", "message", "resync_required", "boot_id"}}`. 앱은 `code`로 처리한다.
 
 | code | HTTP | 언제 |
 |---|---|---|
-| `CLOCK_NOT_SYNCED` | 409 | 동기화 전에 세션 시작 |
+| `CLOCK_NOT_SYNCED` | 409 | 동기화 전에 세션 시작 / 기준 자세 측정 |
 | `CLOCK_BACKWARD` | 409 | 다시 동기화했는데 시각이 0.5초 넘게 뒤로 감 (0.5초 이내는 200 `applied: false`, 시각 그대로) |
 | `CLOCK_JUMP_IN_SESSION` | 409 | 측정 중 다시 동기화했는데 2초 넘게 앞으로 감 (정지한 뒤 보내면 됨) |
 | `CLOCK_BEFORE_LAST_RECORD` | 409 | 서버를 켠 뒤 첫 동기화가 DB의 마지막 기록보다 이전 (`detail.last_record_at`) — 아래 복구 |
 | `SESSION_ACTIVE` | 409 | 세션이 있는데 또 시작 |
-| `NOT_RUNNING` | 409 | 실행 중이 아닌데 일시정지 / 기준 자세 측정 |
+| `NOT_RUNNING` | 409 | 실행 중이 아닌데 일시정지 / 일시정지 중 기준 자세 측정 |
 | `NOT_PAUSED` | 409 | 일시정지가 아닌데 재개 |
 | `NO_SESSION` | 409 | 세션이 없는데 정지 |
 | `INVALID_TIME` / `INVALID_TIMEZONE` | 422 | 잘못된 시각(2024년 이전 등) / Asia/Seoul이 아닌 시간대 |
@@ -176,11 +186,13 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 | # | 항목 | 지금 코드 | 누구와 |
 |---|---|---|---|
 | 1 | 거리센서 | 문서·`config.yaml`은 VL53L1X, 하드웨어 확정 목록은 HC-SR04/미정 → mock은 둘 다 흉내 (`--distance-sensor`) | 전체 |
-| 2 | 리포트(일간·주간) API | 아직 없음. 앱 화면 정보가 정리되면 추가 | 앱 |
+| 2 | 리포트(홈·일간·주간·목표) API | 저장·자정 요약은 완료, 읽기 API는 ④에서 추가 (계산 출처는 `../docs/db_design.md` 7장) | 앱 |
 | 3 | `postures`에 기울기 포함 | `tilt_left`/`tilt_right`도 나쁜 자세로 넣음 | 전체 |
 | 4 | 3초 필터 | 서버가 주는 상태는 3초 필터를 거친 값 (`pending`에 대기 중인 변화) | AI |
 | 5 | FSR 개수 | 수집 단계 8칸 → 실험 후 6칸 선별, **최종 6칸** (2열 × 3행). `config.yaml`은 아직 8 → 6채널 제안값은 `../mock/README.md` (공용 파일이라 팀 상의 후 변경) | AI |
 | 6 | API 문서 위치 | `hardware/server/openapi.yaml`. 확정되면 `docs/`로 옮길지 | 전체 |
+| 7 | `.gitignore` | `*.db`만 무시 → SQLite의 `-wal`·`-shm`·`.bak`도 무시하도록 `*.db-wal`, `*.db-shm`, `*.db.bak` 추가 제안 (mock DB는 이미 무시되는 `data/synthetic/`에 둠) | 전체 |
+| 8 | 기울어진 자세 방향 (주간 비교) | 가정: 이번 주 왼쪽·오른쪽 기울기 합이 큰 쪽의 하루 평균을 지난주 같은 방향과 비교 (`../docs/db_design.md` 9장) | 앱 |
 
 ## 나중에 바꿀 곳
 

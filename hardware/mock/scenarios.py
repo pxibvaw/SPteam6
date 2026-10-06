@@ -15,10 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from common.schema import LANDMARK_NAMES, Phase, SeatState, check_labels
-
-# 자세가 겹칠 때 대표 자세 (앞일수록 우선). 판단 규칙은 AI 엔진 몫이고,
-# 여기서는 더미 데이터의 정답(세션 JSON의 extra.expected)을 적을 때만 쓴다.
-PRIORITY = ("forward_head", "cross", "lean", "tilt")
+from hardware.server.seating import PRIORITY, priority_rank   # noqa: F401 — 대표 자세 우선순위 (한 곳에서 관리)
 
 
 @dataclass(frozen=True)
@@ -91,7 +88,7 @@ class Step:
             found.append(f"lean_{self.extra_lean}")
         if self.tilt != "none":
             found.append(f"tilt_{self.tilt}")
-        return sorted(found, key=lambda p: next(i for i, k in enumerate(PRIORITY) if p.startswith(k)))
+        return sorted(found, key=priority_rank)
 
     @property
     def dominant(self) -> str:

@@ -63,7 +63,8 @@
 | `summarized_at` | 요약 만든 시각 |
 | `summary_checked` | 요약을 다시 읽어 확인했는지 (0/1) |
 | `raw_deleted_at` | 원본 삭제 시각 |
-| `note` | `midnight` / `catchup` |
+| `note` | `midnight` / `catchup` / `recompute` |
+| `needs_recompute` | 요약한 뒤 그날에 걸친 구간이 늦게 닫혔거나 계산 방식이 바뀌어 다시 계산할 날 (0/1, 마이그레이션 002) |
 
 ### 센서 배치 (8 → 6채널 대응)
 
@@ -280,10 +281,31 @@ PRAGMA temp_store = MEMORY;
 
 1분마다, 그리고 **서버가 켜진 뒤 첫 시각 동기화 직후** 확인한다 (동기화 전에는 오늘 날짜를 모른다).
 
-1. 오늘보다 이전이면서 `summarized_at`이 없는 날을 **오래된 날부터** 요약 → 다시 읽어 확인 → `summary_checked = 1`.
-2. `summary_checked = 1`이고 `summarized_at + 30분`이 지났고 `raw_deleted_at`이 없는 날 → 그날 `raw_chunks` 삭제 → `raw_deleted_at` 기록.
-3. Pi가 꺼져 있었으면 1, 2를 밀린 날짜 순서대로 처리 (`note = catchup`).
-4. 자정을 넘겨 측정 중이면 시간대별 표는 이미 나뉘어 있고, 최대 연속 착석은 진행 중 구간을 24:00에서 잘라 계산한다.
+코드: `hardware/server/db/jobs.py`(순서), `hardware/server/db/summary.py`(계산). 시험: `python -m hardware.server.check_summary`.
+
+1. 요약할 날이 있으면 **모아 둔 기록을 먼저 쓴다** (23:59대 1분치가 빠지지 않게).
+2. 오늘보다 이전이면서 기록이 있는 날 중 **확인 전 / `needs_recompute = 1`**인 날을 **오래된 날부터**
+   요약(덮어쓰기) → 다시 읽어 확인(값 일치 + 정상·비정상·unknown 합 = 착석, 겹치지 않는 합 = 비정상) → `summary_checked = 1`.
+   확인이 안 되면 다음 실행 때 다시 하고, 원본은 지우지 않는다. **기록이 없는 날은 요약을 만들지 않는다.**
+3. 확인 완료 + **첫 요약 후 30분**이 지난 날 → 그날 `raw_chunks` 삭제 → `raw_deleted_at` 기록 (다시 계산해도 삭제 기준 시각은 그대로).
+4. Pi가 꺼져 있었으면 켠 뒤 첫 동기화 직후 1~3을 밀린 날짜 순서대로 (`note = catchup`). 원본은 모든 날 똑같이 확인 후 30분 뒤 삭제.
+5. 자정을 넘겨 측정 중이면 시간대별 표는 이미 나뉘어 있고, 최대 연속 착석은 진행 중 구간을 24:00에서 잘라 계산한다.
+6. **늦게 바뀌는 값:** 요약한 날에 걸친 구간이 나중에 닫히면(자정을 넘긴 구간, 비정상 종료 복구) 걸친 날들을 `needs_recompute = 1`로
+   표시 → 다음 실행 때 다시 계산 (`source = recompute`). 예: 23:59 시작 구간의 첫 비정상이 00:01이면 시작한 날의 무너짐에 들어간다.
+7. **계산 방식이 바뀌면:** `summary.CALC_VERSION`을 올린다 → 서버가 켜질 때 그보다 낮은 요약을 다시 계산할 날로 표시.
+   우선순위는 `hardware/server/seating.py`의 `PRIORITY` 한 곳에서 관리한다 (바꾸면 `CALC_VERSION`도 올림).
+   수동: `python -m hardware.server.db.summary --db <DB> --recompute --day YYYY-MM-DD` (또는 `--all`). API는 필요하면 ⑤에서.
+8. 같은 날을 몇 번 돌려도 값이 같다 (세 표에서만 계산해 덮어쓰고, 원본 삭제는 한 번만 일어남).
+
+| 요약 값 | 계산 |
+|---|---|
+| `seated_sec` | 그날 `posture_hour` 합 |
+| `normal` / `abnormal` / `unknown_sec` | 조합마다 착석 구간 로직과 같은 규칙 (`seating.classify`) |
+| `{자세}_sec` / `raw_{자세}_sec` | 비정상 조합의 초를 우선순위 첫 자세에만 / 들어 있는 모든 자세에 |
+| `max_continuous_sec` | 구간을 [그날 00:00, 다음 날 00:00)으로 잘라서 가장 긴 것 |
+| `segment_count`, `collapse_*` | 그날 **시작한** 구간 수, 그중 첫 비정상이 있는 것의 평균·개수 |
+| `avg_distance_mm`, `closer_sec` | 그날 `hour_metrics` |
+| 정상 비율 | 저장하지 않음 — ④에서 `normal ÷ (seated − unknown)`, 분모가 0이면 `null` |
 
 ## 6. 기록 초기화와 내보내기
 

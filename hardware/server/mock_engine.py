@@ -23,7 +23,7 @@ from common.schema import (
 )
 from common.sensors_base import Sample
 from hardware.mock.scenarios import Step
-from hardware.server.seating import SeatingTracker, is_empty
+from hardware.server.seating import SeatingTracker, is_empty, postures_of
 
 # ai/engine/upper_body.py UpperRules 기본값과 같게 유지
 UPPER_RULE_DEFAULTS = {
@@ -36,16 +36,6 @@ UPPER_RULE_DEFAULTS = {
 SENSOR_OK_SEC = 2.0             # 최근 이 시간 안에 정상 값을 읽었으면 센서 정상
 MAX_GAP_SEC = 5.0               # 기록이 이보다 오래 끊기면 연속 착석이 끊긴 것으로 봄
 HISTORY_SEC = 3600              # 최근 판단 기록 보관 (1초에 1개)
-
-POSTURE_KEYS = {                # 앱에 보여줄 나쁜 자세 이름. 순서 = 우선순위 (postures[0]이 대표 자세)
-    ("head", "forward"): "forward_head",        # 거북목 > 다리 꼬기 > 체중 편향 > 기울어진 자세
-    ("seat", "cross_left"): "cross_left",
-    ("seat", "cross_right"): "cross_right",
-    ("seat", "lean_left"): "lean_left",
-    ("seat", "lean_right"): "lean_right",
-    ("tilt", "left"): "tilt_left",
-    ("tilt", "right"): "tilt_right",
-}
 
 
 class StateFilter:
@@ -301,8 +291,7 @@ class MockEngine:
         if self.baseline and self.baseline.distance_mm is not None and dist_mm is not None:
             closer = self.baseline.distance_mm - dist_mm >= self.close_delta_mm
 
-        postures = [name for (kind, value), name in POSTURE_KEYS.items()
-                    if {"seat": seat, "head": head, "tilt": tilt}[kind].value == value]
+        postures = postures_of(seat.value, head.value, tilt.value)     # 우선순위 순서 (seating.PRIORITY)
         self.seating.update(ts, empty=is_empty(values), seat=seat.value, head=head.value,
                             tilt=tilt.value, postures=postures)
         pending = []

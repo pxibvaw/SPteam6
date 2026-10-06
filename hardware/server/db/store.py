@@ -8,6 +8,7 @@
     - 5초 미만 자리 비움은 seat=away로 넣고, 5초가 되어 구간이 끝나면 그 비움 시간은 버린다
     - 구간이 시작될 때 착석 확인 시간(1초)은 unknown
 켤 때 열린 채 남은 세션·구간은 meta.last_seen에 사유 crash로 닫는다 (정전 손실 최대 1분).
+이미 요약한 날에 걸친 구간이 나중에 닫히면 그날들을 day_jobs.needs_recompute = 1로 표시한다 (jobs.py가 다시 계산).
 """
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ import numpy as np
 from common.schema import LANDMARK_NAMES
 from hardware.server.clock import TIMEZONE, AppClock
 from hardware.server.db.connection import connect
+from hardware.server.db.jobs import days_between
 from hardware.server.db.migrate import migrate
 from hardware.server.seating import MAX_STEP_SEC
 
@@ -87,6 +89,11 @@ class Recorder:
             raise
         self.tx_count += 1
 
+    def _mark_recompute(self, c: sqlite3.Connection, t0: float, t1: float) -> None:
+        """[t0, t1]에 걸친 날 중 이미 요약한 날을 다시 계산할 날로 표시"""
+        for d in days_between(self.clock, t0, t1):
+            c.execute("UPDATE day_jobs SET needs_recompute = 1 WHERE day = ? AND summarized_at IS NOT NULL", (d,))
+
     def _set_last_seen(self, c: sqlite3.Connection, ts: float) -> None:
         c.execute("INSERT INTO meta (key, value) VALUES ('last_seen', ?) "
                   "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (repr(ts),))
@@ -130,9 +137,12 @@ class Recorder:
                           (ls, sid))
                 c.execute("INSERT INTO session_events (session_id, ts, kind, detail) VALUES (?, ?, 'recovered', ?)",
                           (sid, ls, _json({"reason": "서버가 정지 없이 꺼짐"})))
+            starts = [r["start_ts"] for r in c.execute("SELECT start_ts FROM seating_segments WHERE end_ts IS NULL")]
             out["segments"] = c.execute(
                 "UPDATE seating_segments SET end_ts = MAX(start_ts, ?), end_reason = 'crash' "
                 "WHERE end_ts IS NULL", (ls,)).rowcount
+            for s in starts:
+                self._mark_recompute(c, s, ls)
             out["sessions"] = len(open_sessions)
         self._tx(fix)
         if out["sessions"] or out["segments"]:
@@ -251,6 +261,7 @@ class Recorder:
                       "normal_sec = ?, abnormal_sec = ?, unknown_sec = ? WHERE id = ?",
                       (seg.end, seg.end_reason, seg.first_abnormal_sec, seg.normal_sec, seg.abnormal_sec,
                        seg.unknown_sec, row))
+            self._mark_recompute(c, seg.start, seg.end)
             self._set_last_seen(c, seg.end)
         self._tx(w)
         self._seg = self._seg_row = self._prev_ts = None
