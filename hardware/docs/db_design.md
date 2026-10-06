@@ -27,7 +27,8 @@
 
 | 항목 | 내용 |
 |---|---|
-| 파일 | Pi의 `data/sitsense.db` (`.gitignore`의 `*.db`로 git 제외) |
+| 파일 | Pi의 `data/sitsense.db`. mock 서버는 `data/synthetic/sitsense_mock.db` (따로) |
+| git | `*.db`는 무시되지만 SQLite가 같이 만드는 `-wal`·`-shm`·`.bak`은 아님 → 공용 `.gitignore`에 `*.db-wal`, `*.db-shm`, `*.db.bak` 추가 제안 (팀 확인) |
 | 코드 위치 | `hardware/server/db/` — 연결·PRAGMA, `migrations/NNN_*.sql` |
 | 시각 | 모두 **앱 기준 epoch 초(REAL)** (`hardware/server/clock.py`). `day`(`'YYYY-MM-DD'`)·`hour`(0~23)는 **쓸 때 Asia/Seoul로 계산해 같이 저장** |
 | 동기화 전 | 아무것도 쓰지 않는다 (동기화 전에는 세션 시작도 거절) |
@@ -87,7 +88,7 @@
 |---|---|
 | `id` TEXT PK | `s_20261015_235950` |
 | `started_at`, `ended_at` | 진행 중이면 `ended_at` NULL |
-| `end_reason` | `stop` / `crash` (켤 때 열린 채 남은 세션을 복구) |
+| `end_reason` | `stop` / `crash` (켤 때 열린 채 남은 세션을 복구) / `baseline_failed` (첫 기준 자세 측정 실패) |
 | `boot_id`, `timezone` | |
 | `settings` | JSON — **이 세션에 적용한 설정 스냅샷** (결정 4: 다음 세션부터 적용) |
 | `layout_id` FK | |
@@ -107,7 +108,7 @@
 | 열 | 설명 |
 |---|---|
 | `id` PK, `session_id` FK | |
-| `start`, `end` | 진행 중이면 `end` NULL |
+| `start_ts`, `end_ts` | 진행 중이면 `end_ts` NULL (`end`는 SQL 예약어라 `_ts`를 붙임) |
 | `day` | **시작한 날** (결정 3) |
 | `end_reason` | `away` / `pause` / `stop` / `crash` |
 | `first_abnormal_sec` | 첫 비정상 확정까지 초 (없으면 NULL) |
@@ -170,7 +171,7 @@
 | 열 | 설명 |
 |---|---|
 | `id` PK | |
-| `kind` | `initial` / `recalibration` / `adjusted`(AI 보정 결과) |
+| `kind` | `initial`(처음) / `session`(세션 시작 때마다) / `recalibration`(온보딩·설정의 다시 측정) / `adjusted`(AI 보정 결과) |
 | `status` | `ok` / `failed` |
 | `fail_reason` | `no_person` / `sensor_lost` / `too_much_motion` |
 | `measured_at`, `session_id`, `seconds` | |
@@ -242,11 +243,26 @@ PRAGMA auto_vacuum = INCREMENTAL;   -- DB를 처음 만들 때만. 원본 삭제
 PRAGMA temp_store = MEMORY;
 ```
 
+## 3-1. 기준 자세 흐름 (②에서 확정)
+
+- **세션 시작(시작 버튼)에 10초 측정이 들어 있다.** 앱이 `/calibrate`를 따로 부를 필요 없다.
+- 압력으로 앉은 게 확인(착석 구간 시작)되면 측정을 시작한다. 서 있으면 대기, 측정 중 일어나면 다시 대기.
+- 일시정지 후 재개할 때는 다시 재지 않는다 (측정 중에 일시정지했으면 재개 후 앉으면 처음부터).
+- `/calibrate`는 온보딩·설정의 "기준 자세 다시 측정"용.
+  - **세션 없음 (온보딩):** 기준 자세만 재고 구간·원본 등 기록은 쌓지 않는다. `baselines`에만 저장 (`session_id` 없음,
+    기준이 없으면 `initial`, 있으면 `recalibration`). 측정이 끝나면 센서를 다시 끈다.
+  - **세션 실행 중 (설정):** 판단을 계속하면서 잰다 (`recalibration`). 일시정지 중에는 거절.
+- 앉기를 기다리는 동안 `/baseline`의 `waiting_seat`가 true (`state`는 기존 값 그대로 `measuring`).
+- 실패 이유: 사람을 찾은 비율 < 50% `no_person`, 거리를 잰 비율 < 50% `sensor_lost`, 압력 합 변동 > 15% `too_much_motion` (⚠️ 임시값).
+- **실패하면** 직전 성공 기준으로 세션을 계속하고 `GET /session`의 `baseline`(`state: failed`, `using_previous: true`)으로 알린다.
+  **성공한 기준이 한 번도 없으면** 세션을 멈춘다 (`end_reason: baseline_failed`).
+- 저장된 기준의 압력 채널 수가 지금 배치와 다르면 그 기준은 쓰지 않는다 (새로 `initial` 측정).
+
 ## 4. 시각 규칙 (결정 7)
 
 | 경우 | 동작 |
 |---|---|
-| 서버가 켜진 뒤 첫 동기화 | 받아들인다. 단 **DB의 `meta.last_seen`보다 이전 시각이면 거절** (②에서 오류 코드·복구 방법 확정) |
+| 서버가 켜진 뒤 첫 동기화 | 받아들인다. 단 **DB의 `meta.last_seen`보다 0.5초 넘게 이전이면 409 `CLOCK_BEFORE_LAST_RECORD`** (`detail.last_record_at`) |
 | 세션 밖에서 재동기화, 앞으로 | 받아들인다 |
 | 세션 중 재동기화, 앞으로 2초 이내 | 받아들인다 |
 | 세션 중 재동기화, 2초 넘게 앞으로 | **409 `CLOCK_JUMP_IN_SESSION`** |
@@ -255,6 +271,10 @@ PRAGMA temp_store = MEMORY;
 | Asia/Seoul이 아닌 시간대 | **422 `INVALID_TIMEZONE`** (결정 10) |
 
 변화량은 **한 번 바뀌는 양**(직전 동기화 대비)만 본다. 거절·미적용이면 기존 시각을 그대로 쓴다.
+
+`CLOCK_BEFORE_LAST_RECORD` 복구: ① 폰의 '자동 날짜·시간'을 켜고 다시 동기화 → ② 그래도 거절되면 예전에 잘못된(미래)
+시각으로 기록이 남은 것이므로 기록 초기화(`POST /records/reset`, 확인 문구 `DELETE_RECORDS`) 후 다시 동기화.
+초기화하면 시각 동기화도 지워지고, 설정·기준 자세는 남는다.
 
 ## 5. 자정 작업 (밀린 날짜 포함)
 
@@ -295,8 +315,8 @@ PRAGMA temp_store = MEMORY;
 
 | 항목 | 크기 |
 |---|---|
-| 원본, 좌표 없음 (기본) | 샘플당 약 24B(8채널) → 분당 약 14KB, 압축 후 약 8KB → **8시간 약 4MB**, 최대 보관(24.5시간) 약 12MB |
-| 원본, 좌표 저장 켬 | 분당 약 36KB (압축 후) → 8시간 약 17MB, 최대 약 53MB |
+| 원본, 좌표 없음 (기본) | 샘플당 약 24B(8채널) → 분당 약 14KB, 압축 후 약 8KB (**mock 실측 8.9KB**) → **8시간 약 4MB**, 최대 보관(24.5시간) 약 13MB |
+| 원본, 좌표 저장 켬 | 분당 약 36KB (압축 후, **mock 실측 33.6KB**) → 8시간 약 16MB, 최대 약 50MB |
 | `posture_hour` | 하루 보통 100줄 안팎 (최악 720줄) → 1년 2~13MB |
 | `seating_segments` | 하루 20~50개 → 1년 약 1.5MB |
 | `hour_metrics`·`daily_summary`·세션·기준 자세 | 1년 1MB 미만 |
