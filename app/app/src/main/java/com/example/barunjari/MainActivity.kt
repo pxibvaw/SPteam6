@@ -39,6 +39,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import org.json.JSONObject
+import androidx.compose.ui.platform.LocalContext
 
 private val Green = Color(0xFF16A34A)
 private val PaleGreen = Color(0xFFE7F6EC)
@@ -106,32 +110,100 @@ private fun SitSenseApp(
     var measurementStartedAt by rememberSaveable { mutableLongStateOf(0L) }
     var showAlertCard by rememberSaveable { mutableStateOf(true) }
     var dialog by rememberSaveable { mutableStateOf("") }
+    val prefs = LocalContext.current.getSharedPreferences("sitsense", android.content.Context.MODE_PRIVATE)
+    var serverAddress by rememberSaveable {
+        mutableStateOf(prefs.getString("server_address", null)
+            ?.takeUnless { it == "http://192.168.1.7:8000" } ?: "http://192.168.1.9:8000")
+    }
+    var api by remember {
+        mutableStateOf<SitSenseApi?>(if (connected) runCatching { SitSenseApi(serverAddress) }.getOrNull() else null)
+    }
+    var serverStatus by remember { mutableStateOf(JSONObject()) }
+    var serverSession by remember { mutableStateOf(JSONObject()) }
+    var current by remember { mutableStateOf(JSONObject()) }
+    var layout by remember { mutableStateOf(JSONObject()) }
+    var report by remember { mutableStateOf(JSONObject()) }
+    var apiError by remember { mutableStateOf("") }
+    var commandError by remember { mutableStateOf("") }
+    var reportError by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    val lifecycle = (LocalContext.current as ComponentActivity).lifecycle
+    var foreground by remember { mutableStateOf(lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) }
+    DisposableEffect(lifecycle) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, _ ->
+            foreground = lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+    val scope = rememberCoroutineScope()
+    fun command(action: suspend () -> Unit) {
+        if (busy) return
+        scope.launch {
+            busy = true
+            try { action(); commandError = "" }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { commandError = e.message ?: "서버에 연결할 수 없어요" }
+            finally { busy = false }
+        }
+    }
+    LaunchedEffect(api, connected, foreground) {
+        val client = api ?: return@LaunchedEffect
+        if (!foreground) return@LaunchedEffect
+        while (connected) {
+            try {
+                val status = client.request("/status")
+                val session = client.request("/session")
+                if (!session.optBoolean("clock_synced")) client.sync()
+                serverStatus = status
+                serverSession = session
+                measurementStatus = when(session.optString("state")) {
+                    "running" -> MeasurementStatus.RUNNING
+                    "paused" -> MeasurementStatus.PAUSED
+                    else -> MeasurementStatus.IDLE
+                }
+                measurementMillis = (session.optDouble("elapsed_sec", 0.0).takeIf { it.isFinite() }?.times(1000))?.toLong() ?: 0
+                current = try { client.request("/current") } catch (e: IllegalStateException) {
+                    if (e.message?.contains("404") == true) JSONObject() else throw e
+                }
+                apiError = ""
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { apiError = e.message ?: "연결을 확인해 주세요"; current = JSONObject() }
+            delay(1000)
+        }
+    }
+    LaunchedEffect(api, connected, page, selectedDate, weekly, foreground) {
+        report = JSONObject()
+        val client = api ?: return@LaunchedEffect
+        if (!foreground || !connected || page !in listOf(Page.HOME, Page.REPORT, Page.FEEDBACK)) return@LaunchedEffect
+        val date = ReportDates.format(selectedDate, "yyyy-MM-dd")
+        val path = when(page) {
+            Page.HOME -> "/reports/home"
+            Page.FEEDBACK -> "/reports/goals"
+            else -> if (weekly) "/reports/weekly?start=$date" else "/reports/daily?date=$date"
+        }
+        while (true) {
+            try { report = client.request(path); reportError = "" }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { report = JSONObject(); reportError = e.message ?: "리포트를 불러올 수 없어요" }
+            delay(5000)
+        }
+    }
 
     fun stopMeasurement() {
-        measurementStatus = MeasurementStatus.IDLE
-        measurementMillis = 0L
-        measurementBaseMillis = 0L
+        command { serverSession = (api ?: error("기기를 먼저 연결해 주세요")).request("/session/stop", JSONObject()) }
         if (page == Page.MEASUREMENT) page = Page.HOME
     }
     fun toggleMeasurement() {
-        if (!connected) {
-            page = Page.DEVICE
-        } else if (measurementStatus == MeasurementStatus.RUNNING) {
-            measurementMillis = measurementElapsed(measurementBaseMillis, measurementStartedAt, SystemClock.elapsedRealtime())
-            measurementBaseMillis = measurementMillis
-            measurementStatus = MeasurementStatus.PAUSED
-        } else {
-            measurementStartedAt = SystemClock.elapsedRealtime()
-            measurementStatus = MeasurementStatus.RUNNING
-            page = Page.MEASUREMENT
+        if (api == null || !connected) { page = Page.CONNECTION; return }
+        command {
+            val client = api!!
+            val state = client.request("/session").optString("state")
+            if (state == "idle") client.sync()
+            serverSession = client.request(when(state) { "running" -> "/session/pause"; "paused" -> "/session/resume"; else -> "/session/start" }, JSONObject())
         }
     }
-    LaunchedEffect(measurementStatus) {
-        while (measurementStatus == MeasurementStatus.RUNNING) {
-            measurementMillis = measurementElapsed(measurementBaseMillis, measurementStartedAt, SystemClock.elapsedRealtime())
-            delay(200)
-        }
-    }
+
     BackHandler(enabled = page == Page.MEASUREMENT) { page = Page.HOME }
 
     MaterialTheme(colorScheme = lightColorScheme(primary = Green, background = Background, surface = Color.White)) {
@@ -151,46 +223,58 @@ private fun SitSenseApp(
                         editingGoals = false
                     }
                 )
-                Page.CONNECTION -> ConnectionOnboardingScreen(
-                    includeConnection = true,
+                Page.CONNECTION -> ServerConnect(serverAddress, { serverAddress = it }, busy, commandError.ifEmpty { apiError },
                     onBack = { connected = false; page = if (onboardingComplete) Page.DEVICE else Page.GOALS },
-                    onDone = { connected = true; page = Page.CALIBRATION }
+                    onConnect = { command {
+                        val client = SitSenseApi(serverAddress)
+                        val status = client.request("/status")
+                        val sensorLayout = client.request("/layout")
+                        client.sync()
+                        api = client; serverStatus = status; layout = sensorLayout
+                        prefs.edit().putString("server_address", serverAddress).apply()
+                        connected = true; page = Page.CALIBRATION
+                    } }
                 )
-                Page.CALIBRATION -> ConnectionOnboardingScreen(
-                    includeConnection = false,
+                Page.CALIBRATION -> ServerCalibration(serverSession, busy, commandError.ifEmpty { apiError },
                     onBack = { page = if (onboardingComplete) Page.SETTINGS else Page.CONNECTION },
+                    onStart = { command { (api ?: error("기기를 먼저 연결해 주세요")).request("/calibrate", JSONObject()); serverSession = api!!.request("/session") } },
                     onDone = { saveOnboarding(); onboardingComplete = true; page = Page.HOME }
                 )
                 else -> {
                     Box(Modifier.weight(1f)) {
                         when (page) {
-                            Page.HOME -> HomeScreen(goals, showAlertCard, { showAlertCard = false }, { page = Page.FEEDBACK })
-                            Page.REPORT -> ReportScreen(weekly, { weekly = it }, selectedDate, { selectedDate = it })
-                            Page.MEASUREMENT -> MeasurementScreen(measurementStatus, measurementMillis, { page = Page.HOME })
-                            Page.FEEDBACK -> FeedbackScreen(goals, { editingGoals = true; page = Page.GOALS })
+                            Page.HOME, Page.MEASUREMENT -> ServerHome(serverStatus, current, layout, report, apiError.ifEmpty { reportError })
+                            Page.REPORT -> ServerReport(report, reportError, weekly, { weekly = it }, selectedDate, { selectedDate = it })
+                            Page.FEEDBACK -> ServerGoals(report, reportError, goals) { editingGoals = true; page = Page.GOALS }
                             Page.SETTINGS -> SettingsScreen(
                                 connected, goals, alerts, { alerts = it }, standAlert, { standAlert = it },
                                 threshold, standMinutes,
+                                serverStatus = serverStatus,
                                 onAction = { action ->
                                     when (action) {
                                         "기기 재연결" -> page = Page.DEVICE
                                         "개선 목표" -> { editingGoals = true; page = Page.GOALS }
                                         "기준 자세 다시 측정" -> {
-                                            stopMeasurement()
                                             page = if (connected) Page.CALIBRATION else Page.CONNECTION
                                         }
                                         else -> dialog = action
                                     }
                                 }
                             )
-                            Page.DEVICE -> DeviceScreen(connected, {
-                                stopMeasurement()
-                                if (connected) connected = false else page = Page.CONNECTION
+                            Page.DEVICE -> ServerDevice(serverStatus, connected, busy, {
+                                if (connected) { command { api!!.request("/session/stop", JSONObject()); connected = false; api = null } }
+                                else page = Page.CONNECTION
                             })
                             else -> Unit
                         }
                     }
                     if (page in listOf(Page.HOME, Page.REPORT, Page.FEEDBACK, Page.SETTINGS, Page.DEVICE, Page.MEASUREMENT)) {
+                        if (commandError.isNotEmpty()) Label(commandError, 12, Danger, modifier = Modifier.padding(horizontal = 16.dp))
+                        if (apiError.isNotEmpty()) Label(apiError, 12, Danger, modifier = Modifier.padding(horizontal = 16.dp))
+                        val baseline = serverSession.optJSONObject("baseline") ?: JSONObject()
+                        if (baseline.optString("state") in listOf("waiting_seat", "measuring", "failed") || serverSession.optString("end_reason") == "baseline_failed") {
+                            Label(baselineMessage(baseline.optString("state"), baseline.optString("fail_reason")), 12, Muted, modifier = Modifier.padding(horizontal = 16.dp))
+                        }
                         MeasurementPlayer(measurementStatus, measurementMillis, ::toggleMeasurement, { dialog = "측정 종료" },
                             onOpen = { if (measurementStatus == MeasurementStatus.IDLE) toggleMeasurement() else page = Page.MEASUREMENT })
                     }
@@ -206,8 +290,8 @@ private fun SitSenseApp(
                     when (dialog) {
                         "알림 기준" -> ChoiceColumn(listOf(3, 5, 10).map { "$it 분 이상 지속 시" }, threshold) { threshold = it }
                         "일어나기 알림" -> ChoiceColumn(listOf(30, 50, 60).map { "$it 분 연속 착석 시" }, standMinutes) { standMinutes = it }
-                        "기록 내보내기" -> Text("현재 화면에는 예시 데이터가 표시되고 있어요. 실제 센서 기록이 연결되면 CSV 내보내기를 사용할 수 있어요.")
-                        "기록 초기화" -> Text("선택한 목표와 온보딩 설정을 지우고 처음 화면으로 돌아갈까요?")
+                        "기록 내보내기" -> Text("서버에 CSV 내보내기 API가 아직 제공되지 않았어요.")
+                        "기록 초기화" -> Text("앱의 목표·온보딩 설정만 초기화합니다. 서버 기록은 삭제하지 않아요. 계속할까요?")
                         "측정 종료" -> Text("오늘 측정을 마칠까요?")
                         else -> Text("연결된 센서가 준비되면 사용할 수 있어요.")
                     }
@@ -248,7 +332,7 @@ private fun ChoiceColumn(labels: List<String>, selected: Int, onSelect: (Int) ->
 }
 
 @Composable
-private fun Label(text: String, size: Int = 14, color: Color = Ink, weight: FontWeight = FontWeight.Normal, modifier: Modifier = Modifier, align: TextAlign? = null) {
+internal fun Label(text: String, size: Int = 14, color: Color = Ink, weight: FontWeight = FontWeight.Normal, modifier: Modifier = Modifier, align: TextAlign? = null) {
     Text(text, modifier, color = color, fontSize = size.sp, fontWeight = weight, lineHeight = (size * 1.42f).sp, textAlign = align)
 }
 
@@ -279,7 +363,7 @@ private fun Pill(text: String, green: Boolean = true, modifier: Modifier = Modif
 }
 
 @Composable
-private fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, color: Color = Ink) {
+internal fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, color: Color = Ink) {
     Box(modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(16.dp))
         .background(if (enabled) color else Line).clickable(enabled = enabled, onClick = onClick), contentAlignment = Alignment.Center) {
         Label(text, 16, if (enabled) Color.White else Soft, FontWeight.Bold)
@@ -550,7 +634,7 @@ private fun HomeScreen(goals: Set<Int>, alertVisible: Boolean, dismissAlert: () 
 }
 
 @Composable
-private fun PressureCell(value: Int, modifier: Modifier = Modifier) {
+internal fun PressureCell(value: Int, modifier: Modifier = Modifier) {
     val shade = when { value >= 30 -> Green; value >= 20 -> Color(0xFF77CAA0); value >= 14 -> Color(0xFF93D4AB); else -> Color(0xFFB6E3C5) }
     Box(modifier.height(35.dp).clip(RoundedCornerShape(8.dp)).background(shade), contentAlignment = Alignment.Center) {
         Label("$value%", 12, if (value >= 20) Color.White else Color(0xFF087B36), FontWeight.Bold)
@@ -829,18 +913,21 @@ private fun SettingsScreen(
     setStandAlert: (Boolean) -> Unit,
     threshold: Int,
     standMinutes: Int,
+    serverStatus: JSONObject,
     onAction: (String) -> Unit
 ) {
     LazyColumn(Modifier.fillMaxSize().background(Background), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 13.dp, bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Label("설정", 21, Ink, FontWeight.Bold) }
         item {
             DesignCard(Modifier.fillMaxWidth(), padding = 14) {
-                Row { Label("기기 상태", 13, Ink, FontWeight.Bold, Modifier.weight(1f)); Pill(if (connected) "● 시연 연결" else "● 연결 대기") }
-                SettingRow("카메라", if (connected) "정면 설치 · 시연 상태" else "연결 대기", R.drawable.camera)
-                SettingRow("압력센서 구성", "FSR 6개 · 시연", R.drawable.sliders)
-                SettingRow("방석 압력 센서", if (connected) "시연 데이터" else "연결 대기", R.drawable.seat)
-                SettingRow("적외선 거리 센서", if (connected) "시연 데이터" else "연결 대기", R.drawable.distence)
-                SettingRow("웹 연결", "실제 통신 미연동", R.drawable.wifi)
+                Row { Label("기기 상태", 13, Ink, FontWeight.Bold, Modifier.weight(1f)); Pill(if (connected) "● ${serverStatus.optString("mode")}" else "● 연결 대기") }
+                val sensors = serverStatus.optJSONObject("sensors")
+                fun sensorState(key: String) = if (!connected) "연결 대기" else if (sensors?.optJSONObject(key)?.optBoolean("ok") == true) "정상 응답" else "확인 필요"
+                SettingRow("카메라", sensorState("camera"), R.drawable.camera)
+                SettingRow("압력센서 구성", "FSR 6개 · 서버 배치 기준", R.drawable.sliders)
+                SettingRow("방석 압력 센서", sensorState("pressure"), R.drawable.seat)
+                SettingRow("적외선 거리 센서", sensorState("distance"), R.drawable.distence)
+                SettingRow("서버 연결", if (connected) "연결됨" else "연결 대기", R.drawable.wifi)
                 SettingRow("기기 재연결", "›", R.drawable.refresh, onClick = { onAction("기기 재연결") })
             }
         }
@@ -849,10 +936,10 @@ private fun SettingsScreen(
             DesignCard(Modifier.fillMaxWidth(), padding = 13) {
                 SettingRow("개선 목표", if (goals.isEmpty()) "선택 안 함" else "${goalNames[goals.first()]} 외 ${goals.size - 1}개", R.drawable.target, onClick = { onAction("개선 목표") })
                 SettingRow("기준 자세 다시 측정", "›", R.drawable.refresh, onClick = { onAction("기준 자세 다시 측정") })
-                SettingRow("자세 인정 기준", "3초 이상 유지 ›", R.drawable.clock, onClick = { onAction("자세 인정 기준") })
+                SettingRow("자세 인정 기준", "서버 기준 4초 유지", R.drawable.clock)
             }
         }
-        item { Label("알림", 11, Muted, FontWeight.Bold) }
+        item { Label("알림 · 앱 설정만 변경되며 서버 동기화 API는 준비 중이에요", 11, Muted, FontWeight.Bold) }
         item {
             DesignCard(Modifier.fillMaxWidth(), padding = 13) {
                 SettingRow("실시간 자세 알림", "", R.drawable.bell, toggle = alerts, onToggle = setAlerts)
@@ -1076,7 +1163,7 @@ private fun MeasurementScreen(status: MeasurementStatus, millis: Long, onBack: (
 }
 
 @Composable
-private fun DesignCard(modifier: Modifier = Modifier, padding: Int = 18, content: @Composable ColumnScope.() -> Unit) {
+internal fun DesignCard(modifier: Modifier = Modifier, padding: Int = 18, content: @Composable ColumnScope.() -> Unit) {
     val shape = RoundedCornerShape(22.dp)
     Column(modifier.shadow(4.dp, shape, ambientColor = Color.Black.copy(alpha = .04f), spotColor = Color.Black.copy(alpha = .04f))
         .clip(shape).background(Color.White).padding(padding.dp), content = content)
@@ -1118,7 +1205,7 @@ private fun PostureGauges() {
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-private fun ReportCalendar(selectedDate: Long, weekly: Boolean, onDismiss: () -> Unit, onSelect: (Long) -> Unit) {
+internal fun ReportCalendar(selectedDate: Long, weekly: Boolean, onDismiss: () -> Unit, onSelect: (Long) -> Unit) {
     var pendingDate by rememberSaveable { mutableLongStateOf(selectedDate) }
     var month by rememberSaveable { mutableLongStateOf(ReportDates.monthStart(selectedDate)) }
     val today = ReportDates.today()
