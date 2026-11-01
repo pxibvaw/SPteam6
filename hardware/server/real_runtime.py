@@ -52,6 +52,8 @@ class GatedSensor(Sensor, Switchable):
         self.warmup_sec = warmup_sec
         self._on = False
         self._on_at: float | None = None
+        if hasattr(inner, "power_off"):
+            inner.power_off(0.0)                      # 세션 시작 전에는 꺼 둔다 (거리 트리거 펄스·카메라)
 
     @property
     def is_on(self) -> bool:

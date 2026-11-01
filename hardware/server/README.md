@@ -215,9 +215,8 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 ## 나중에 바꿀 곳
 
 - **mock 서버에도 AI 엔진을 쓰려면:** `RealEngine`을 mock 시나리오에 쓰면 된다 (지금 mock은 기존 가짜 판단 유지)
-- **실제 센서 클래스가 오면:** `../sensors/pressure.py`(`Mcp3208Pressure`), `../sensors/distance.py`(`Hcsr04Distance`)를
-  `../sensors/factory.py`의 약속대로 만들면 real 모드가 바로 읽는다. Pi 전용 라이브러리(`spidev`, `gpiozero`)는 `__init__` 안에서 import.
-  카메라는 `ai/camera`의 `PoseSource`를 `build_hub(cfg, pose=…)`에 넘기면 된다.
+- **센서 클래스:** 압력 `../sensors/pressure.py`(`Mcp3208Pressure`), 거리 `../sensors/distance.py`(`Hcsr04Distance`)가 `../sensors/factory.py`의 약속대로 있다.
+  Pi 전용 라이브러리(`spidev`, `gpiozero`)는 `__init__` 안에서 import. 시험은 `python -m hardware.sensors.check_pressure`, `check_distance` (가짜 SPI·GPIO)
 
 ## real 모드 (실제 센서)
 
