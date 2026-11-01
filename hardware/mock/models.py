@@ -20,7 +20,7 @@ from common.sensors_base import (
 # 거리센서 흉내 (HC-SR04로 확정)
 #   noise_mm: 측정 떨림, fail_prob: 평소 실패 확률, spike_prob: 평소 값 튐 확률
 DISTANCE_SENSORS = {
-    "hc-sr04": {"noise_mm": 12.0, "fail_prob": 0.044, "spike_prob": 0.005},   # 실제 수집에서 측정 안 됨 4.4%, 초음파 반사로 가끔 튐
+    "hc-sr04": {"noise_mm": 6.0, "fail_prob": 0.042, "spike_prob": 0.005},   # 실제 수집에서 측정 안 됨 4.2%, 초음파 반사로 가끔 튐
 }
 # 압력 크기: 6채널이면 실제 수집값(p1~p3, 자세 바꾼 뒤 10초 이후)의 자세별 채널 평균을 쓴다.
 # 순서 = config.yaml pressure.channels [0,1,3,4,6,7] → p0..p5. 앉으면 대부분 채널이 3000~3700대에 붙고,
@@ -33,14 +33,26 @@ REAL_MEANS = {
     "cross_right": [2957, 1775, 3136, 3581, 3645, 3425],
 }
 REAL_STD = [307, 117, 194, 71, 86, 170]      # 자세 안에서 천천히 변하는 폭 (채널별 표준편차)
-REAL_NOISE = 30.0                            # 0.5초마다 생기는 잔잔한 떨림
+REAL_NOISE = 6.0                             # 0.5초마다 생기는 잔잔한 떨림 (실측 0.5초 변화 중앙값 약 6~8 → 표준편차 약 6)
+REAL_DRIFT_TAU = 120.0                       # 천천히 변하는 시간 (초). 실측은 0.5초 사이 변화가 6~8밖에 안 될 만큼 매끄러움
 REAL_DRIFT_K = 0.35                          # 실제 폭의 35%만 흔들림 (100%로 하면 AI 엔진이 가만히 앉은 mock을 가끔 편향으로 판정)
 # 채널 수가 6이 아닌 배치(시험용 7채널 등)는 아래 비율 모양에 PRESSURE_SCALE을 곱해 쓴다
 PRESSURE_SCALE = 6.0
 
-BASE_DISTANCE_MM = 600          # 바른 자세일 때 화면 거리 (mock_sensors 기본값과 같음)
+# 거리: 실측(p1~p3)에서 앉은 위치별 중앙값 — 앞 약 43.7cm / 중간 약 63.4cm / 뒤 약 82.3cm (3명 평균, 벽 읽기 제외)
+POSITION_DISTANCE_MM = {"front": 437, "middle": 634, "back": 823, "none": 634}
+# 몸을 기울이면 얼굴이 센서 빔에서 벗어나 뒤쪽 벽(약 165cm)을 읽는다. 실측에서 이 값이 나온 비율:
+#   오른쪽 편향 15~57%, 왼쪽 편향 2~12%, 왼다리 꼬기 0~13%, 그 외 거의 0 (평균 연속 길이 약 3샘플)
+# 기울기(tilt)는 실측이 없어서 편향과 같은 방향으로 가정
+WALL_MM = 1650
+WALL_STD_MM = 40.0
+WALL_EXIT_PROB = 0.35                         # 벽을 읽다가 돌아올 확률 (샘플당) → 평균 연속 약 3샘플
+WALL_RATE = {"lean_right": 0.40, "lean_left": 0.06, "cross_left": 0.07, "cross_right": 0.01,
+             "tilt_right": 0.20, "tilt_left": 0.05}
+WALL_RATE_DEFAULT = 0.01
+BASE_DISTANCE_MM = 600          # (사용 안 함: 앉은 위치별 값을 씀. fake_history 등 예전 코드와 맞추려고 남김)
 FORWARD_OFFSET_MM = -80         # 거북목이면 화면에 가까워짐 (mock_sensors와 같음)
-EMPTY_DISTANCE_MM = 1100        # 자리 비움이면 의자 뒤 벽까지 거리
+EMPTY_DISTANCE_MM = 1650        # 자리 비움이면 뒤쪽 벽까지 거리 (실측 벽 읽기 약 165cm)
 
 
 class Drift:
@@ -76,7 +88,7 @@ class PressureModel:
         self.noise = noise if noise is not None else (REAL_NOISE if self.real else 12.0 * PRESSURE_SCALE)
         if drift is None:
             drift = np.array(REAL_STD, dtype=float) * REAL_DRIFT_K if self.real else 25.0 * PRESSURE_SCALE
-        self.drift = Drift(rng, len(self.pos), drift)
+        self.drift = Drift(rng, len(self.pos), drift, tau_sec=REAL_DRIFT_TAU if self.real else 5.0)
 
     def _real_base(self, seat: str, extra_lean: str | None) -> np.ndarray:
         """실제 평균 × (자세 평균 ÷ 바른 자세 평균). 다리 꼬기와 체중 편향이 겹치면 두 비율을 곱함"""
@@ -126,12 +138,26 @@ class DistanceModel:
         self.sensor = sensor
         self.spec = DISTANCE_SENSORS[sensor]
         self.rng = rng
-        self.drift = Drift(rng, 1, 10.0)
+        self.drift = Drift(rng, 1, 35.0, tau_sec=20.0)     # 자세 안에서 거리가 천천히 변함 (실측 표준편차 약 4cm)
+        self.wall = False                                   # 지금 얼굴이 빔에서 벗어나 벽을 읽는 중
+        # 벽 읽기는 별도 난수로 (압력 끊김 등 다른 모델의 난수 순서가 바뀌지 않게). 같은 seed면 같은 결과
+        self.wall_rng = np.random.default_rng(rng.bit_generator.seed_seq.spawn(1)[0])
 
-    def true_mm(self, head: str, empty: bool) -> float:
+    def true_mm(self, head: str, empty: bool, pos: str = "middle") -> float:
         if empty:
             return EMPTY_DISTANCE_MM
-        return BASE_DISTANCE_MM + (FORWARD_OFFSET_MM if head == HeadState.FORWARD.value else 0)
+        return POSITION_DISTANCE_MM.get(pos, POSITION_DISTANCE_MM["middle"]) + (
+            FORWARD_OFFSET_MM if head == HeadState.FORWARD.value else 0)
+
+    def _wall_step(self, seat: str, tilt: str) -> bool:
+        """벽 읽기 상태를 한 샘플 진행 (자세에 따라 들어갈 확률이 다르고, 들어가면 몇 샘플 이어짐)"""
+        rate = max(WALL_RATE.get(seat, WALL_RATE_DEFAULT), WALL_RATE.get(f"tilt_{tilt}", WALL_RATE_DEFAULT))
+        if self.wall:
+            self.wall = self.wall_rng.random() >= WALL_EXIT_PROB
+        else:
+            enter = rate * WALL_EXIT_PROB / (1.0 - rate)
+            self.wall = self.wall_rng.random() < enter
+        return self.wall
 
     def _spike(self, true_mm: float) -> int:
         """튄 값: 반은 범위 밖(min_mm/max_mm로 걸러짐), 반은 범위 안 틀린 값(중앙값 필터로만 걸러짐)"""
@@ -143,12 +169,15 @@ class DistanceModel:
         return int(mm)
 
     def read(self, ts: float, head: str, empty: bool, fail_prob: float = 0.0,
-             spike_prob: float = 0.0) -> DistanceReading:
+             spike_prob: float = 0.0, pos: str = "middle", seat: str = "normal",
+             tilt: str = "none") -> DistanceReading:
         r = self.rng
         drift = float(self.drift.step(ts)[0])
         if r.random() < max(fail_prob, self.spec["fail_prob"]):
             return DistanceReading(ts=ts, distance_mm=None, range_status=STATUS_READ_ERROR)
-        true_mm = self.true_mm(head, empty)
+        true_mm = self.true_mm(head, empty, pos)
+        if not empty and self._wall_step(seat, tilt):         # 벽을 읽음: 값은 정상(status 0)인데 틀림
+            return DistanceReading(ts=ts, distance_mm=int(round(self.wall_rng.normal(WALL_MM, WALL_STD_MM))), range_status=STATUS_OK)
         if r.random() < max(spike_prob, self.spec["spike_prob"]):
             return DistanceReading(ts=ts, distance_mm=self._spike(true_mm), range_status=STATUS_OK)
         mm = true_mm + drift + r.normal(0, self.spec["noise_mm"])
