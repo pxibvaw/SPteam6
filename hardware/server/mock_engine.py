@@ -81,6 +81,8 @@ BASELINE_MAX_PRESSURE_CV = 0.15     # 압력 합의 변동계수(표준편차/�
 
 
 class MockEngine:
+    require_pose = True      # 기준 자세 측정에 카메라가 필요한지 (real 모드에서 카메라가 없으면 False)
+
     def __init__(self, cfg: dict, seed: int | None = None, *, auto_baseline: bool = True,
                  baseline: BaselineValue | None = None):
         """auto_baseline: 기준이 없으면 앉는 즉시 알아서 측정 (서버 없이 엔진만 돌릴 때).
@@ -166,7 +168,7 @@ class MockEngine:
         dists = [s.distance.distance_mm for s in buf if s.distance.valid]
         poses = [s.pose for s in buf if s.pose is not None and s.pose.detected]
         reason = None
-        if len(poses) < BASELINE_MIN_POSE_RATIO * n:
+        if self.require_pose and len(poses) < BASELINE_MIN_POSE_RATIO * n:
             reason = "no_person"
         elif len(dists) < BASELINE_MIN_DISTANCE_RATIO * n:
             reason = "sensor_lost"
@@ -176,9 +178,9 @@ class MockEngine:
                   "measured_at": ts, "seconds": round(ts - m["start"], 1), "value": None}
         if reason is None:
             p = np.mean([s.pressure.values for s in buf], axis=0)
-            pose = {nm: [round(float(np.mean([getattr(q.points[nm], a) for q in poses if nm in q.points])), 4)
-                         for a in ("x", "y", "z", "visibility")]
-                    for nm in LANDMARK_NAMES}
+            pose = ({nm: [round(float(np.mean([getattr(q.points[nm], a) for q in poses if nm in q.points])), 4)
+                          for a in ("x", "y", "z", "visibility")]
+                     for nm in LANDMARK_NAMES} if poses else None)       # 카메라 없이 잰 기준은 pose 없음
             self.baseline = result["value"] = BaselineValue(
                 created_at=ts, seconds=result["seconds"], pressure=[round(float(v), 1) for v in p],
                 distance_mm=float(np.median(dists)), pose=pose, kind=m["kind"])

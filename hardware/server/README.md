@@ -22,12 +22,15 @@
 | `mock_engine.py` | 가짜 판단: AI 엔진(`ai/engine/upper_body.py`)과 같은 모양의 결과(상태, 확신도, deltas, cues, 3초 필터) |
 | `schemas.py` | 앱에 주는 JSON 형식. **API 형식을 바꿀 때는 여기만 고친다** |
 | `mock_server.py` | FastAPI mock 서버 (세션·시각·센서 전원을 따라 시나리오 재생) |
+| `real_runtime.py` | **real 모드**: 실제 센서(`SensorHub`)를 읽어 같은 서버를 돌림 (`RealSource` 시각 변환, `GatedSensor` 전원 연결, `RealEngine` 판단 자리). 판단은 AI 연결 전까지 unknown |
+| `../sensors/factory.py` | 실제 센서를 열어 `SensorHub`로 묶음 (`main.py --mode real`, 서버 real 모드 공용). 센서 클래스 약속이 적혀 있음 |
 | `clock.py` | 앱 기준 시각: '앱 시각 − Pi 단조시계' 차이만 저장, `boot_id` |
 | `session.py` | 세션 상태 (idle / running / paused), 경과 시간 |
 | `power.py` | 센서 전원 정책 (세션 상태 + 착석 구간 → 압력·카메라·거리 켜고 끄기) |
 | `seating.py` | 착석 구간 (자리 비움 5초, 정상/비정상/unknown) |
 | `../sensors/power.py` | 센서 전원 인터페이스 `Switchable` (실제 센서 클래스가 구현) + mock용 `SimulatedSwitch` |
 | `db/` | SQLite: `connection.py`(WAL 등 설정), `migrate.py`(스키마 버전), `migrations/`(001 테이블 13개, 002 다시 계산 표시), `store.py`(저장 경로 `Recorder`), `summary.py`(하루 요약 계산·다시 계산 명령어), `jobs.py`(자정 작업), `reports.py`(리포트 계산, 읽기 전용). 설계는 [`../docs/db_design.md`](../docs/db_design.md) |
+| `check_real.py` | real 모드 시험: mock 센서를 끼워 PC에서 실제 센서 경로(시각 변환·전원·자리 비움·기준 자세·DB)를 확인 |
 | `check_seating.py`, `check_session.py`, `check_db.py`, `check_summary.py`, `check_reports.py` | 확인 도구 (가상 시각으로 시나리오·API 흐름·DB 저장·자정 요약·리포트 시험) |
 | `openapi.yaml` | API 명세 (자동 생성 — 직접 고치지 않기). 안드로이드 Retrofit 코드 생성 등에 사용 |
 
@@ -212,6 +215,22 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 ## 나중에 바꿀 곳
 
 - **AI 엔진이 합쳐지면:** `mock_engine.py`의 `judge_upper()` / `judge_seat()` 대신 AI 판단 결과를 넣는다 (응답 형식은 그대로)
-- **실제 센서가 오면:** `ScenarioPlayer` 대신 실제 센서로 읽는 real 모드 서버를 추가. 센서 클래스는
-  `../sensors/power.py`의 `Switchable`을 구현하고, 꺼진 센서는 읽지 않는 hub(`common`의 `SensorHub`를 감싸기)를 만든다.
-  센서 값은 Pi 시각으로 찍히므로 읽은 직후 `clock.stamp(sample)`로 앱 시각으로 바꾼다
+- **실제 센서 클래스가 오면:** `../sensors/pressure.py`(`Mcp3208Pressure`), `../sensors/distance.py`(`Hcsr04Distance`)를
+  `../sensors/factory.py`의 약속대로 만들면 real 모드가 바로 읽는다. Pi 전용 라이브러리(`spidev`, `gpiozero`)는 `__init__` 안에서 import.
+  카메라는 `ai/camera`의 `PoseSource`를 `build_hub(cfg, pose=…)`에 넘기면 된다.
+
+## real 모드 (실제 센서)
+
+```bash
+# Pi에서 (센서 클래스가 있어야 켜짐. 없으면 어떤 파일이 필요한지 알려 주고 종료)
+python -m hardware.server.mock_server --mode real            # 포트 8000, DB는 data/sitsense.db
+python main.py --mode real --record --subject p1 --pos middle   # 서버 없이 센서만 읽어 CSV 저장
+
+# PC에서 mock 센서로 real 경로만 시험
+python -m hardware.server.check_real
+```
+
+- API·세션·기준 자세·착석 구간·DB는 mock 모드와 같다. 응답 `mode`만 `real`, `scenario*`는 null, `/mock/*`는 없다.
+- 판단(`seat_state`·`head_state`·`tilt_state`)은 AI 엔진 연결 전까지 `unknown`(빈 의자는 `empty`). 압력·거리·압력 중심·착석 구간 시간은 실제 값이다.
+- 카메라가 없으면(`pose=None`) 기준 자세를 사람 인식 없이 잰다.
+- 센서 시각은 읽은 직후 앱 기준 시각으로 바꾼다 (`RealSource.read`).

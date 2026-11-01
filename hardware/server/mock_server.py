@@ -72,7 +72,7 @@ class MockRuntime:
         self._thread: threading.Thread | None = None
         self.clock = clock or AppClock()
         self.session = SessionController()
-        self.power = PowerPolicy()
+        self.power = self._make_power()
         self.seated_now: bool | None = None     # 지금 압력이 있는지 (압력센서가 꺼져 있으면 None)
         self.end_reason: str | None = None      # 마지막 세션이 끝난 이유
         self._pending_stop: str | None = None   # 판단 도중 정해진 정지 (기준 자세 실패)
@@ -92,6 +92,17 @@ class MockRuntime:
                     distance_mm=b["distance_mm"], pose=b["pose"], kind=b["kind"])
         self.select(scenario, loop, seed)
 
+    # --- 데이터 출처 (RealRuntime이 바꾼다) -------------------------------------
+    mode = "mock"
+    camera_detail = "Pi Camera V2"
+    engine_cls = MockEngine
+
+    def _make_power(self) -> PowerPolicy:
+        return PowerPolicy()
+
+    def _new_player(self):
+        return ScenarioPlayer(self.cfg, self.scenario, seed=self.seed, loop=self.loop)
+
     def now(self) -> float:
         """앱 기준 지금 시각 (동기화 전에는 Pi 시각 — 그때는 기록이 없다)"""
         return self.clock.now_or_pi()
@@ -103,7 +114,7 @@ class MockRuntime:
         if hold is not None and hold != cfg["thresholds"]["short_filter_sec"]:
             cfg = copy.deepcopy(cfg)
             cfg["thresholds"]["short_filter_sec"] = hold        # 앱 설정이 config.yaml보다 우선
-        e = MockEngine(cfg, seed=self.seed, auto_baseline=False, baseline=self.current_baseline)
+        e = self.engine_cls(cfg, seed=self.seed, auto_baseline=False, baseline=self.current_baseline)
         e.on_measure_start = self._on_measure_start
         e.on_baseline = self._on_baseline
         return e
@@ -171,7 +182,7 @@ class MockRuntime:
             if self.session.state is SessionState.PAUSED:
                 raise SessionError("NOT_RUNNING", "일시정지 중에는 잴 수 없음. 재개한 뒤 다시 요청하세요")
             self.cal_engine = self._new_engine()
-            self.player = ScenarioPlayer(self.cfg, self.scenario, seed=self.seed, loop=self.loop)
+            self.player = self._new_player()
             self.player.start(ts)
             log.info("세션 없이 기준 자세 측정 (%s): 앉으면 시작", kind)
             return self.cal_engine.request_baseline(kind)
@@ -190,7 +201,7 @@ class MockRuntime:
             self.session_settings = dict(self.settings)        # 설정은 다음 세션부터 적용
             self.end_reason = None
             self.cal_engine = None                      # 세션 없이 재던 중이었으면 그만 (세션 측정으로 대신)
-            self.player = ScenarioPlayer(self.cfg, self.scenario, seed=self.seed, loop=self.loop)
+            self.player = self._new_player()
             self.player.start(ts)                       # 시나리오도 처음(기준 자세)부터
             self.engine = self._new_engine()
             self.engine.request_baseline("session" if self.current_baseline else "initial")
@@ -352,7 +363,7 @@ class MockRuntime:
             try:
                 self.tick()
             except Exception:  # noqa: BLE001 — 한 순간 오류로 서버가 멈추지 않게
-                log.exception("mock 데이터 생성 오류")
+                log.exception("센서 읽기·판단 오류")
             self._stop.wait(max(0.0, self.period - (time.monotonic() - t0)))
 
     def start(self) -> None:
@@ -384,8 +395,9 @@ REPORT_ERRORS = {**ERRORS, 503: {"model": ErrorResponse, "description": "DB 없�
 
 def create_app(cfg: dict, scenario: str = "demo", loop: bool = True, seed: int | None = None,
                *, clock: AppClock | None = None, autostart: bool = False,
-               db_path: str | Path | None = None) -> FastAPI:
-    runtime = MockRuntime(cfg, scenario, loop, seed, clock=clock, db_path=db_path)
+               db_path: str | Path | None = None, runtime: MockRuntime | None = None) -> FastAPI:
+    """runtime을 주면(real 모드) 그걸 쓰고, 없으면 mock 시나리오 런타임을 만든다"""
+    runtime = runtime or MockRuntime(cfg, scenario, loop, seed, clock=clock, db_path=db_path)
     if autostart:                                   # 예전처럼 바로 데이터: PC 시계로 동기화 + 세션 시작
         runtime.clock.sync(time.time(), "Asia/Seoul")
         runtime.start_session()
@@ -436,7 +448,7 @@ def create_app(cfg: dict, scenario: str = "demo", loop: bool = True, seed: int |
             e = runtime.engine
             latest = e.latest
             return {
-                "mode": "mock",
+                "mode": runtime.mode,
                 "server_time": ts,
                 "last_record_ts": latest["ts"] if latest else None,
                 "baseline_ready": runtime.current_baseline is not None,
@@ -444,12 +456,12 @@ def create_app(cfg: dict, scenario: str = "demo", loop: bool = True, seed: int |
                     "pressure": {"ok": e.sensor_ok("pressure", ts),
                                  "detail": f"FSR {cfg['pressure']['n_channels']}채널 (MCP3208)"},
                     "distance": {"ok": e.sensor_ok("distance", ts), "detail": runtime.player.distance_sensor},
-                    "camera": {"ok": e.sensor_ok("camera", ts), "detail": "Pi Camera V2"},
+                    "camera": {"ok": e.sensor_ok("camera", ts), "detail": runtime.camera_detail},
                 },
-                "scenario": runtime.scenario.name,
-                "scenario_elapsed_sec": (None if runtime.player.t0 is None
+                "scenario": runtime.scenario.name if runtime.scenario else None,
+                "scenario_elapsed_sec": (None if runtime.scenario is None or runtime.player.t0 is None
                                          else round(runtime.player.elapsed(ts), 1)),
-                "scenario_total_sec": runtime.scenario.total_sec,
+                "scenario_total_sec": runtime.scenario.total_sec if runtime.scenario else None,
             }
 
     @app.get("/current", response_model=Current, tags=["자세"], summary="지금 자세 (1~3초마다 호출)",
@@ -583,18 +595,19 @@ def create_app(cfg: dict, scenario: str = "demo", loop: bool = True, seed: int |
             fail(409, e.code, str(e))
         return {"deleted": deleted, "resync_required": True}
 
-    @app.get("/mock/scenarios", response_model=list[ScenarioInfo], tags=["mock 전용"],
-             summary="시나리오 목록")
-    def scenarios():
-        return [scenario_info(s) for s in SCENARIOS.values()]
+    if runtime.mode == "mock":                      # 시나리오 선택은 mock 전용 (real 모드에는 없음)
+        @app.get("/mock/scenarios", response_model=list[ScenarioInfo], tags=["mock 전용"],
+                 summary="시나리오 목록")
+        def scenarios():
+            return [scenario_info(s) for s in SCENARIOS.values()]
 
-    @app.post("/mock/scenario", response_model=ScenarioInfo, tags=["mock 전용"],
-              summary="재생할 시나리오 바꾸기 (기준 자세부터 다시 시작)",
-              responses={404: {"description": "없는 시나리오"}})
-    def select_scenario(req: ScenarioSelect):
-        if req.name not in SCENARIOS:
-            raise HTTPException(404, f"시나리오 '{req.name}' 없음. 가능: {list(SCENARIOS)}")
-        return scenario_info(runtime.select(req.name, req.loop, req.seed))
+        @app.post("/mock/scenario", response_model=ScenarioInfo, tags=["mock 전용"],
+                  summary="재생할 시나리오 바꾸기 (기준 자세부터 다시 시작)",
+                  responses={404: {"description": "없는 시나리오"}})
+        def select_scenario(req: ScenarioSelect):
+            if req.name not in SCENARIOS:
+                raise HTTPException(404, f"시나리오 '{req.name}' 없음. 가능: {list(SCENARIOS)}")
+            return scenario_info(runtime.select(req.name, req.loop, req.seed))
 
     return app
 
@@ -620,15 +633,17 @@ def lan_ip() -> str:
 
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="[SitSense] %(levelname)s %(message)s")
-    ap = argparse.ArgumentParser(description="SitSense mock 서버")
+    ap = argparse.ArgumentParser(description="SitSense 서버 (mock 시나리오 / real 실제 센서)")
+    ap.add_argument("--mode", choices=["mock", "real"], default="mock",
+                    help="mock = 시나리오 더미 데이터, real = 실제 센서 (Pi에서)")
     ap.add_argument("--scenario", default="demo", choices=list(SCENARIOS))
     ap.add_argument("--no-loop", action="store_true", help="시나리오를 한 번만 재생")
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--host", default="0.0.0.0", help="0.0.0.0 = 같은 Wi-Fi의 폰에서도 접속 가능")
     ap.add_argument("--port", type=int, default=8000)
-    ap.add_argument("--db", default="data/synthetic/sitsense_mock.db",
-                    help="SQLite 파일 (기본: data/synthetic/sitsense_mock.db — 실제 기기 DB와 따로, "
-                         "-wal·-shm 파일까지 git에서 무시되는 폴더)")
+    ap.add_argument("--db", default=None,
+                    help="SQLite 파일 (기본: mock은 data/synthetic/sitsense_mock.db, "
+                         "real은 data/sitsense.db — 서로 섞이지 않게 따로. *.db는 git에서 무시됨)")
     ap.add_argument("--no-db", action="store_true", help="저장하지 않음")
     ap.add_argument("--autostart", action="store_true",
                     help="켜자마자 PC 시계로 시각 동기화 + 세션 시작 (앱 없이 바로 데이터 보기)")
@@ -645,9 +660,21 @@ def main() -> int:
         return 0
 
     import uvicorn
-    db_path = None if args.no_db else repo_path(args.db)
-    app = create_app(cfg, args.scenario, loop=not args.no_loop, seed=args.seed, autostart=args.autostart,
-                     db_path=db_path)
+    db_default = "data/sitsense.db" if args.mode == "real" else "data/synthetic/sitsense_mock.db"
+    db_path = None if args.no_db else repo_path(args.db or db_default)
+    if args.mode == "real":
+        from common.sensors_base import SensorError
+        from hardware.sensors.factory import build_hub
+        from hardware.server.real_runtime import RealRuntime
+        try:
+            runtime = RealRuntime(cfg, build_hub(cfg), db_path=db_path)
+        except SensorError as e:
+            log.error("%s", e)
+            return 2
+        app = create_app(cfg, autostart=args.autostart, runtime=runtime)
+    else:
+        app = create_app(cfg, args.scenario, loop=not args.no_loop, seed=args.seed,
+                         autostart=args.autostart, db_path=db_path)
     log.info("저장: %s", db_path or "안 함 (--no-db)")
     if not args.autostart:
         log.info("앱이 POST /time/sync → POST /session/start를 보내면 측정을 시작함 (바로 보려면 --autostart)")
