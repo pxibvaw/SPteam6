@@ -8,7 +8,7 @@
 
 지금은 뼈대 단계라 '판단' 자리는 비어 있고, 센서 값만 출력한다.
     - 판단(엔진): ai/engine/ 완성 후 연결 (AI 담당)
-    - 실제 센서: hardware/sensors/ 완성 후 연결 (하드웨어 담당)
+    - 실제 센서: --mode real (Pi에서). 센서 클래스는 hardware/sensors/, 묶는 곳은 factory.py
     - 저장·서버: hardware/server/ 완성 후 연결 (하드웨어 담당)
 
 종료 코드: 0 정상 / 1 설정·입력 오류 / 2 센서 오류 / 3 저장 오류 / 130 Ctrl+C
@@ -43,10 +43,8 @@ def build_source(cfg: dict, args):
         return ReplaySource(path, loop=cfg["replay"]["loop"],
                             expected_channels=cfg["pressure"]["n_channels"])
     if args.mode == "real":
-        # TODO(하드웨어): hardware/sensors/의 실제 센서로 SensorHub(pressure, distance, pose,
-        #                 n_channels=…, adc_max=…)를 만들어 반환
-        # TODO(AI): pose에는 ai/camera의 MediaPipe 결과를 주는 PoseSource를 연결
-        raise SensorError("실제 센서 코드가 아직 없음 (hardware/sensors/, ai/camera/)")
+        from hardware.sensors.factory import build_hub     # Pi 전용 라이브러리는 real일 때만 불러옴
+        return build_hub(cfg, camera=args.camera, rotate180=args.rotate180)
     raise ConfigError(f"알 수 없는 mode: {args.mode}")
 
 
@@ -72,6 +70,9 @@ def parse_args(cfg: dict) -> argparse.Namespace:
     ap.add_argument("--chair", default="", help="세션 정보: 의자")
     ap.add_argument("--cushion", default="", help="세션 정보: 방석")
     ap.add_argument("--notes", default="", help="세션 정보: 특이사항")
+    ap.add_argument("--camera", choices=["none", "picam", "webcam"], default="none",
+                    help="real 모드의 카메라: none(없이) / picam(Pi 카메라) / webcam(시험용)")
+    ap.add_argument("--rotate180", action="store_true", help="카메라를 거꾸로 달았을 때")
     ap.add_argument("--quiet", action="store_true", help="매 줄 출력하지 않기")
     args = ap.parse_args()
     if args.seconds is not None and args.seconds <= 0:

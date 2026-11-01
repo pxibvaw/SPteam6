@@ -167,7 +167,8 @@ class ScenarioPlayer:
         if not self.sensors_on:
             return Sample(ts=ts, pressure=pressure, distance=DistanceReading.failed(ts), pose=None)
 
-        distance = self.distance.read(ts, lab["head"], empty, step.distance_fail, step.distance_spike)
+        distance = self.distance.read(ts, lab["head"], empty, step.distance_fail, step.distance_spike,
+                                      pos=lab["pos"], seat=lab["seat"], tilt=lab["tilt"])
 
         # 카메라: 초당 fps장만 새로 나오고, 그 사이에는 가장 최근 결과
         if self._last_pose is None or ts - self._last_pose.ts >= self.cam_period * 0.9:

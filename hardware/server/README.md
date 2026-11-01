@@ -19,15 +19,20 @@
 |---|---|
 | `../mock/scenarios.py` | 시나리오 목록 (자세 하나씩 / 복합 / 경계 / 센서 오류 / 데모) |
 | `../mock/generator.py` | 시나리오 → `Sample`(압력·거리·카메라 점). 실시간 생성기 + replay CSV 만들기 |
-| `mock_engine.py` | 가짜 판단: AI 엔진(`ai/engine/upper_body.py`)과 같은 모양의 결과(상태, 확신도, deltas, cues, 3초 필터) |
+| `mock_engine.py` | 가짜 판단: AI 엔진(`ai/engine/upper_body.py`)과 같은 모양의 결과(상태, 확신도, deltas, cues, 유지 시간 필터) |
 | `schemas.py` | 앱에 주는 JSON 형식. **API 형식을 바꿀 때는 여기만 고친다** |
 | `mock_server.py` | FastAPI mock 서버 (세션·시각·센서 전원을 따라 시나리오 재생) |
+| `ai_engine.py` | **AI 판정 어댑터** `AiEngine`: 기준 자세·착석 구간·응답은 `MockEngine` 그대로, 판단만 `SitSenseEngine`으로. real 서버와 mock `--engine ai`가 같이 씀 |
+| `real_runtime.py` | **real 모드**: 실제 센서(`SensorHub`)를 읽어 같은 서버를 돌림 (`RealSource` 시각 변환, `GatedSensor` 전원 연결, `RealEngine` = AI 엔진 `ai/engine/sitsense_engine.py` 연결, 서버 시간 필터는 건너뜀) |
+| `../sensors/factory.py` | 실제 센서를 열어 `SensorHub`로 묶음 (`main.py --mode real`, 서버 real 모드 공용). 센서 클래스 약속이 적혀 있음 |
 | `clock.py` | 앱 기준 시각: '앱 시각 − Pi 단조시계' 차이만 저장, `boot_id` |
 | `session.py` | 세션 상태 (idle / running / paused), 경과 시간 |
 | `power.py` | 센서 전원 정책 (세션 상태 + 착석 구간 → 압력·카메라·거리 켜고 끄기) |
 | `seating.py` | 착석 구간 (자리 비움 5초, 정상/비정상/unknown) |
 | `../sensors/power.py` | 센서 전원 인터페이스 `Switchable` (실제 센서 클래스가 구현) + mock용 `SimulatedSwitch` |
 | `db/` | SQLite: `connection.py`(WAL 등 설정), `migrate.py`(스키마 버전), `migrations/`(001 테이블 13개, 002 다시 계산 표시), `store.py`(저장 경로 `Recorder`), `summary.py`(하루 요약 계산·다시 계산 명령어), `jobs.py`(자정 작업), `reports.py`(리포트 계산, 읽기 전용). 설계는 [`../docs/db_design.md`](../docs/db_design.md) |
+| `check_mock_ai.py` | mock 시나리오 10종을 AI 엔진에 넣어 기준 자세→판정→착석 구간→DB→API가 끝까지 도는지 확인 (AI 판정이 정답과 같은지는 참고로만 출력) |
+| `check_real.py` | real 모드 시험: mock 센서를 끼워 PC에서 실제 센서 경로(시각 변환·전원·자리 비움·기준 자세·DB)를 확인 |
 | `check_seating.py`, `check_session.py`, `check_db.py`, `check_summary.py`, `check_reports.py` | 확인 도구 (가상 시각으로 시나리오·API 흐름·DB 저장·자정 요약·리포트 시험) |
 | `openapi.yaml` | API 명세 (자동 생성 — 직접 고치지 않기). 안드로이드 Retrofit 코드 생성 등에 사용 |
 
@@ -69,7 +74,7 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 | 메서드 | 주소 | 용도 |
 |---|---|---|
 | GET | `/status` | 서버·센서 상태, mock 여부, 재생 중인 시나리오 |
-| GET | `/current` | 지금 자세 (홈 화면, 1~3초마다 호출) |
+| GET | `/current` | 지금 자세 (홈 화면, 1초마다 호출) |
 | GET | `/history?seconds=60` | 최근 판단 기록 (1초에 1개, 최대 1시간) |
 | GET | `/baseline` | 기준(바른) 자세 측정값, 측정 중이면 남은 시간 |
 | POST | `/calibrate` | 기준 자세 측정 (앉으면 10초). 세션 없이(온보딩) 또는 세션 중(설정의 다시 측정) |
@@ -103,11 +108,11 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 | 자리 비움이 이어지면 구간 종료, **종료 시각 = 판단 시각 − 5초** | `EMPTY_END_SEC = 5` |
 | 구간 밖에서 압력이 이어지면 새 구간, **시작 = 압력이 처음 들어온 시각** | `SIT_CONFIRM_SEC = 1` ⚠️ |
 | 5초 미만 자리 비움 | 구간 유지, 그 시간은 `unknown` |
-| `normal` = 목 normal + 기울기 none + 좌면 normal / `abnormal` = 나쁜 자세 확정 / 그 외 `unknown` | 3초 필터 거친 상태 기준 |
-| 첫 비정상까지 초 | 구간 시작 → 처음 `abnormal` 확정 (3초 유지) |
+| `normal` = 목 normal + 기울기 none + 좌면 normal / `abnormal` = 나쁜 자세 확정 / 그 외 `unknown` | `short_filter_sec`(현재 4초) 필터 거친 상태 기준 |
+| 첫 비정상까지 초 | 구간 시작 → 처음 `abnormal` 확정 (`short_filter_sec`, 현재 4초 유지) |
 
 - ⚠️ `EMPTY_TOTAL_ADC = 50`은 임시값이다. 실물 FSR로 빈 의자와 앉았을 때 압력 합을 재서 다시 맞춰야 한다 (AI 코드와 같이 바꿀 것).
-- `/current`의 `seated`·`sitting_since`는 예전처럼 3초 필터를 따른다 (형식 유지). **착석 시간은 `/seating` 기준으로 쓴다.**
+- `/current`의 `seated`·`sitting_since`는 예전처럼 유지 시간 필터(`short_filter_sec`)를 따른다 (형식 유지). **착석 시간은 `/seating` 기준으로 쓴다.**
 - 끝난 구간은 SQLite(`seating_segments`)에도 저장된다. `/seating/segments`는 지금 서버 메모리 기준(재시작하면 비어 있음)이고,
   DB에서 읽는 리포트 API는 ④에서 만든다.
 - 확인: `python -m hardware.server.check_seating` (22개 시나리오 × 8·6채널, 정답과 비교)
@@ -171,7 +176,7 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 
 | API 필드 | AI 코드 (`ai` 브랜치) |
 |---|---|
-| `head_state`, `tilt_state` | `UpperJudgement.head` / `.tilt` (3초 필터 거친 값) |
+| `head_state`, `tilt_state` | `UpperJudgement.head` / `.tilt` (`short_filter_sec` 필터 거친 값) |
 | `confidence.head` / `.tilt` | `head_confidence` / `tilt_confidence` |
 | `deltas` (neck_drop, face_grow, closer_mm, shoulder_angle, head_angle, head_offset) | `UpperJudgement.deltas` |
 | `cues` | `UpperJudgement.cues` |
@@ -203,7 +208,7 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 | 1 | 거리센서 | ~~VL53L1X/HC-SR04 미정~~ → **HC-SR04로 확정**, `config.yaml`·mock 반영 완료 | 전체 |
 | 2 | 홈 "오른쪽 편향 비율 33%" | 무엇의 비율인지 미정 → 대표 자세 비율(`daily_posture.ratio`)과 좌우 편향(`lean_balance.right_ratio`)을 둘 다 줌 | 앱 |
 | 3 | `postures`에 기울기 포함 | `tilt_left`/`tilt_right`도 나쁜 자세로 넣음 | 전체 |
-| 4 | 3초 필터 | 서버가 주는 상태는 3초 필터를 거친 값 (`pending`에 대기 중인 변화) | AI |
+| 4 | 유지 시간 필터 | 서버가 주는 상태는 `short_filter_sec`(현재 4초)를 거친 값 (`pending`에 대기 중인 변화) | AI |
 | 5 | FSR 개수 | **6칸**(MCP3208 CH0, 1, 3, 4, 6, 7; CH2·CH5 제외, 2열 × 3행)을 `config.yaml`에 반영. 배치가 바뀌면 `channels`·`positions` 변경 | AI |
 | 6 | API 문서 위치 | `hardware/server/openapi.yaml`. 확정되면 `docs/`로 옮길지 | 전체 |
 | 7 | `.gitignore` | `*.db`만 무시 → SQLite의 `-wal`·`-shm`·`.bak`도 무시하도록 `*.db-wal`, `*.db-shm`, `*.db.bak` 추가 제안 (mock DB는 이미 무시되는 `data/synthetic/`에 둠) | 전체 |
@@ -211,7 +216,62 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 
 ## 나중에 바꿀 곳
 
-- **AI 엔진이 합쳐지면:** `mock_engine.py`의 `judge_upper()` / `judge_seat()` 대신 AI 판단 결과를 넣는다 (응답 형식은 그대로)
-- **실제 센서가 오면:** `ScenarioPlayer` 대신 실제 센서로 읽는 real 모드 서버를 추가. 센서 클래스는
-  `../sensors/power.py`의 `Switchable`을 구현하고, 꺼진 센서는 읽지 않는 hub(`common`의 `SensorHub`를 감싸기)를 만든다.
-  센서 값은 Pi 시각으로 찍히므로 읽은 직후 `clock.stamp(sample)`로 앱 시각으로 바꾼다
+- **센서 클래스:** 압력 `../sensors/pressure.py`(`Mcp3208Pressure`), 거리 `../sensors/distance.py`(`Hcsr04Distance`)가 `../sensors/factory.py`의 약속대로 있다.
+  Pi 전용 라이브러리(`spidev`, `gpiozero`)는 `__init__` 안에서 import. 시험은 `python -m hardware.sensors.check_pressure`, `check_distance` (가짜 SPI·GPIO)
+
+## real 모드 (실제 센서)
+
+```bash
+# Pi에서 (센서 클래스가 있어야 켜짐. 없으면 어떤 파일이 필요한지 알려 주고 종료)
+python -m hardware.server.mock_server --mode real            # 포트 8000, DB는 data/sitsense.db
+python main.py --mode real --record --subject p1 --pos middle   # 서버 없이 센서만 읽어 CSV 저장
+
+# PC에서 mock 센서로 real 경로만 시험
+python -m hardware.server.check_real
+```
+
+- API·세션·기준 자세·착석 구간·DB는 mock 모드와 같다. 응답 `mode`만 `real`, `scenario*`는 null, `/mock/*`는 없다.
+- 판단(`seat_state`·`head_state`·`tilt_state`·`distance_level`)은 AI 엔진(`SitSenseEngine`)이 한다. 엔진이 이미 4초 유지를 거친 확정 상태를 주므로 서버의 유지 시간 필터는 real에서 건너뛴다(`PassThroughFilter`). 화면 거리 단계도 엔진의 4초 유지 값을 쓴다.
+- 기준 측정 실패 사유에 `pressure_low`(센서가 최대치의 25% 미만)가 추가됐다 → 앱 안내 문구 필요. 성공한 기준이 없으면 세션이 멈춘다(`baseline_failed`).
+- 카메라: `--camera picam`(Pi) / `webcam`(시험용), 거꾸로 달았으면 `--rotate180`. 기본 `none`이면 목·기울기는 `unknown`.
+- 카메라가 없으면(`pose=None`) 기준 자세를 사람 인식 없이 잰다.
+- 센서 시각은 읽은 직후 앱 기준 시각으로 바꾼다 (`RealSource.read`).
+
+## mock에서 AI 엔진 쓰기 (`--engine`)
+
+mock의 목적은 '데이터가 들어오면 AI와 앱이 잘 도는지' 확인하는 것이라, mock 서버도 기본으로 AI 엔진을 쓴다.
+
+```bash
+python -m hardware.server.mock_server                    # --engine ai (기본): mock 센서 값 → AI 엔진 → 서버 → 앱
+python -m hardware.server.mock_server --engine fake      # 시나리오 정답을 그대로 (앱 화면을 예측 가능하게 볼 때)
+python -m hardware.server.check_mock_ai                  # 파이프라인 확인 (AI 판정이 정답과 다를 수 있음)
+```
+
+- `ai`: 기준 자세 측정(10초) 뒤 AI 판정이 나오고, 자세를 바꾸면 약 5초 뒤 반영된다. mock 압력은 실제 수집값을 흉내 낸 것이라
+  시나리오 라벨과 AI 판정이 가끔 다를 수 있다 (`lean_right` 등) — 이 차이가 모델 점검 자료가 된다.
+- `fake`: 3초 필터와 시나리오 정답. 시험 도구(`check_session` 등)는 이쪽으로 돌린다 (`create_app` 기본값 `engine="fake"`).
+
+## 앱 화면 문구 — 기준 자세 (확정)
+
+서버는 문구를 주지 않고 상태만 준다 (표시용 글자는 앱이 만든다). 앱은 아래 표대로 보여 준다.
+상태는 `GET /baseline`의 `state` / `waiting_seat` / `remaining_sec`, 세션 중에는 `GET /session`의 `baseline`.
+
+| 상태 | 의미 | 문구 |
+|---|---|---|
+| `none` | 아직 기준 없음 | 처음 한 번, 바른 자세를 측정해요 |
+| `measuring` + `waiting_seat=true` | 앉기를 기다리는 중 | 방석에 깊숙이 바르게 앉아 주세요 |
+| `measuring` | 10초 측정 중 (`remaining_sec`) | 바른 자세로 편하게 앉아주세요 (n초) |
+| `ready` | 완료 | 기준 자세를 저장했어요 |
+| `failed` | 실패 | 아래 `fail_reason`별 문구 |
+
+| `fail_reason` | 문구 |
+|---|---|
+| `no_person` | 카메라에 상체가 보이지 않아요. 정면에 앉아 주세요 |
+| `sensor_lost` | 거리 센서가 값을 읽지 못했어요. 화면 앞에 앉아 있는지 확인해 주세요 |
+| `too_much_motion` | 움직임이 커서 측정하지 못했어요. 가만히 앉아 다시 시도해 주세요 |
+| `pressure_low` | 방석에 깊숙이 바르게 앉아 다시 측정해 주세요 |
+
+- `failed`이고 `using_previous=true`이면 "이전 기준을 계속 사용해요"를 덧붙인다.
+- 성공한 기준이 없는 채로 실패하면 세션이 멈추고 `end_reason`이 `baseline_failed`로 온다.
+- 연결 단계("기기와 센서를 연결하고 있어요")는 `GET /status`의 센서 `ok` 값으로 정한다.
+- 실시간 자세(`GET /current`)는 **1초 주기**로 호출한다.

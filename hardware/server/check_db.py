@@ -158,7 +158,7 @@ def main() -> int:
         check("away = 정지 직전 비움 2.1초 + 6초 비움 시작 순간 0.1초 × 3", abs(away - 2.4) <= 0.05,
               f"away {away:.1f}초")
         dist = env.q("SELECT SUM(distance_n), SUM(distance_sum_mm) / SUM(distance_n) FROM hour_metrics")[0]
-        check("거리 평균 (기준 약 600mm)", 550 < dist[1] < 650, f"{dist[1]:.0f}mm ({dist[0]}개)")
+        check("거리 평균 (앉은 위치 중간 약 630mm + 벽 읽기 소량)", 580 < dist[1] < 700, f"{dist[1]:.0f}mm ({dist[0]}개)")
         n_raw = env.one("SELECT SUM(n_samples) FROM raw_chunks")
         chunks = env.q("SELECT day, n_samples, has_pose, LENGTH(data) FROM raw_chunks ORDER BY start_ts")
         check("원본 덩어리: 1분·자정·일시정지에서 나뉨, 좌표 없음",

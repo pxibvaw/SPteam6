@@ -27,7 +27,7 @@ paths:
     get:
       tags:
       - 자세
-      summary: 지금 자세 (1~3초마다 호출)
+      summary: 지금 자세 (1초마다 호출)
       operationId: current_current_get
       responses:
         '200':
@@ -841,7 +841,7 @@ components:
       - pose_detected
       - baseline_ready
       title: Current
-      description: 지금 자세 — 홈 화면용, 1~3초마다 호출
+      description: 지금 자세 — 홈 화면용, 1초마다 호출
     DailyReport:
       properties:
         date:
@@ -1494,7 +1494,8 @@ components:
       - state
       - remaining_sec
       title: Pending
-      description: 새 자세가 나타났지만 아직 short_filter_sec(3초)가 안 지나 확정되지 않은 것
+      description: 새 자세가 나타났지만 아직 short_filter_sec(config.yaml, 현재 4초)가 안 지나 확정되지
+        않은 것
     Point:
       properties:
         x:
@@ -1692,7 +1693,7 @@ components:
       - ts
       - seated
       title: Seating
-      description: 지금 착석 구간 — /current의 seated(3초 필터)와 달리 '자리 비움 5초' 규칙을 따른다
+      description: 지금 착석 구간 — /current의 seated(유지 시간 필터)와 달리 '자리 비움 5초' 규칙을 따른다
     SeatingSegment:
       properties:
         start:
@@ -1721,7 +1722,8 @@ components:
           - type: number
           - type: 'null'
           title: First Abnormal Sec
-          description: 구간 시작 → 첫 비정상 자세 확정(3초 유지)까지 초. 아직 없으면 null
+          description: 구간 시작 → 첫 비정상 자세 확정(short_filter_sec, 현재 4초 유지)까지 초. 아직 없으면
+            null
         normal_sec:
           type: number
           title: Normal Sec
@@ -1817,7 +1819,8 @@ components:
           - type: string
           - type: 'null'
           title: Fail Reason
-          description: 실패 이유 (no_person / sensor_lost / too_much_motion)
+          description: '실패 이유 (no_person / sensor_lost / too_much_motion / pressure_low:
+            덜 눌린 센서가 있음, 깊숙이 바르게 앉기)'
         using_previous:
           type: boolean
           title: Using Previous

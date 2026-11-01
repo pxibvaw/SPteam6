@@ -5,7 +5,7 @@ AI 엔진(ai 브랜치 ai/engine/upper_body.py)과 같은 모양의 결과를 �
     - 착석 구간: seating.SeatingTracker (자리 비움 5초 → 구간 종료, 구간별 정상/비정상/unknown 시간)
     - 목·기울기: 라벨에 맞는 변화량(deltas)을 흉내 내고, 판단 규칙은 upper_body.judge()와 같게
       (threshold는 config.yaml의 upper_rules, 없으면 AI 코드의 기본값)
-    - 시간 필터: 새 상태가 short_filter_sec(3초) 이상 이어져야 확정 (upper_body.StateFilter와 같은 방식)
+    - 시간 필터: 새 상태가 short_filter_sec(config.yaml, 현재 4초) 이상 이어져야 확정 (upper_body.StateFilter와 같은 방식)
 
 AI 엔진이 합쳐지면 judge_upper()/judge_seat() 대신 진짜 결과를 넣으면 된다.
 AI 코드는 import하지 않는다 (hardware 브랜치에 아직 없음, 수정하지 않기로 함).
@@ -81,6 +81,8 @@ BASELINE_MAX_PRESSURE_CV = 0.15     # 압력 합의 변동계수(표준편차/�
 
 
 class MockEngine:
+    require_pose = True      # 기준 자세 측정에 카메라가 필요한지 (real 모드에서 카메라가 없으면 False)
+
     def __init__(self, cfg: dict, seed: int | None = None, *, auto_baseline: bool = True,
                  baseline: BaselineValue | None = None):
         """auto_baseline: 기준이 없으면 앉는 즉시 알아서 측정 (서버 없이 엔진만 돌릴 때).
@@ -166,25 +168,43 @@ class MockEngine:
         dists = [s.distance.distance_mm for s in buf if s.distance.valid]
         poses = [s.pose for s in buf if s.pose is not None and s.pose.detected]
         reason = None
-        if len(poses) < BASELINE_MIN_POSE_RATIO * n:
+        if self.require_pose and len(poses) < BASELINE_MIN_POSE_RATIO * n:
             reason = "no_person"
         elif len(dists) < BASELINE_MIN_DISTANCE_RATIO * n:
             reason = "sensor_lost"
         elif totals.std() / max(totals.mean(), 1.0) > BASELINE_MAX_PRESSURE_CV:
             reason = "too_much_motion"
+        if reason is None:
+            reason = self.on_calibrate(buf)         # 판단 엔진이 따로 기준을 잡는 경우 (real 모드)
         result = {"kind": m["kind"], "status": "ok" if reason is None else "failed", "fail_reason": reason,
                   "measured_at": ts, "seconds": round(ts - m["start"], 1), "value": None}
         if reason is None:
             p = np.mean([s.pressure.values for s in buf], axis=0)
-            pose = {nm: [round(float(np.mean([getattr(q.points[nm], a) for q in poses if nm in q.points])), 4)
-                         for a in ("x", "y", "z", "visibility")]
-                    for nm in LANDMARK_NAMES}
+            pose = ({nm: [round(float(np.mean([getattr(q.points[nm], a) for q in poses if nm in q.points])), 4)
+                          for a in ("x", "y", "z", "visibility")]
+                     for nm in LANDMARK_NAMES} if poses else None)       # 카메라 없이 잰 기준은 pose 없음
             self.baseline = result["value"] = BaselineValue(
                 created_at=ts, seconds=result["seconds"], pressure=[round(float(v), 1) for v in p],
                 distance_mm=float(np.median(dists)), pose=pose, kind=m["kind"])
         self.measure, self._buf, self.last_result = None, [], result     # 실패면 이전 기준(self.baseline) 유지
         if self.on_baseline:
             self.on_baseline(result)
+
+    def on_calibrate(self, samples: list[Sample]) -> str | None:
+        """기준 측정 품질 검사를 통과한 뒤 부른다. 실패 이유 문자열을 돌려주면 측정 실패 (mock은 항상 통과)"""
+        return None
+
+    def distance_level_of(self, dist_mm: float | None) -> DistanceLevel:
+        return classify_distance(dist_mm, self.ok_mm, self.warn_mm)
+
+    def pending_list(self, ts: float) -> list[dict]:
+        """바뀌기를 기다리는 상태 (short_filter_sec 필터)"""
+        out = []
+        for kind, f in self.filters.items():
+            p = f.pending(ts)
+            if p is not None:
+                out.append({"kind": kind, "state": p[0].value, "remaining_sec": round(p[1], 1)})
+        return out
 
     # --- 가짜 판단 ----------------------------------------------------------
     def judge_seat(self, sample: Sample, step: Step) -> tuple[SeatState, float]:
@@ -294,11 +314,7 @@ class MockEngine:
         postures = postures_of(seat.value, head.value, tilt.value)     # 우선순위 순서 (seating.PRIORITY)
         self.seating.update(ts, empty=is_empty(values), seat=seat.value, head=head.value,
                             tilt=tilt.value, postures=postures)
-        pending = []
-        for kind, f in self.filters.items():
-            p = f.pending(ts)
-            if p is not None:
-                pending.append({"kind": kind, "state": p[0].value, "remaining_sec": round(p[1], 1)})
+        pending = self.pending_list(ts)
 
         pose = sample.pose
         self.latest = {
@@ -313,8 +329,7 @@ class MockEngine:
             "deltas": deltas,
             "cues": cues,
             "distance_mm": dist_mm,
-            "distance_level": classify_distance(dist_mm, self.ok_mm, self.warn_mm) if seated
-            else DistanceLevel.UNKNOWN,
+            "distance_level": self.distance_level_of(dist_mm) if seated else DistanceLevel.UNKNOWN,
             "closer_than_baseline": closer if seated else None,
             "pressure": values,
             "pressure_ratio": ratio,
