@@ -6,7 +6,7 @@ recorder.py가 만든 CSV를 한 줄씩 읽어서, SensorHub와 똑같은 모양
 사용 예:
     src = ReplaySource("data/raw/p1_20261015_143012.csv")
     sample = src.read()
-    src.labels   # {"phase": "record", "seat": "cross_left", "head": "normal", "tilt": "none"}
+    src.labels   # {"phase": "record", "seat": "cross_left", "head": "normal", "tilt": "none", "pos": "middle"}
     src.info     # 같은 이름의 세션 정보 JSON (없으면 None)
 
 깨진 줄(숫자가 아니거나 칸이 빈 줄)은 건너뛰고 src.skipped에 개수를 센다.
@@ -108,7 +108,8 @@ class ReplaySource:
                     log.warning("%s %d번 줄 건너뜀: %s", path, i, e)
                 continue
             labels = {"phase": row["phase"], "seat": row["seat_label"],
-                      "head": row["head_label"], "tilt": row["tilt_label"]}
+                      "head": row["head_label"], "tilt": row["tilt_label"],
+                      "pos": row["pos_label"]}
             self.samples.append((sample, labels))
         if self.skipped:
             log.warning("%s: 깨진 줄 %d개를 건너뜀", path, self.skipped)

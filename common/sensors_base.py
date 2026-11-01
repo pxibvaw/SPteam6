@@ -25,7 +25,7 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
-STATUS_OK = 0                # VL53L1X range status 0 = 정상
+STATUS_OK = 0                # range_status 0 = 정상 (HC-SR04는 상태 코드가 없어서 읽히면 0)
 STATUS_READ_ERROR = -1       # 센서 읽기 자체가 실패 (통신 오류 등) — 우리가 정한 값
 
 
@@ -42,9 +42,9 @@ class SampleSkipped(SensorError):
 # ---------------------------------------------------------------------------
 @dataclass
 class PressureReading:
-    """FSR 406 × 8 → MCP3008"""
+    """FSR 406 × 6 → MCP3208"""
     ts: float                    # 측정 시각
-    values: list[int]            # ADC 원래 값 0~1023, 길이 = pressure.n_channels
+    values: list[int]            # ADC 원래 값 0~4095 (12bit), 길이 = pressure.n_channels
                                  # 채널 번호 ↔ 방석 위치는 config.yaml의 pressure.positions
 
     def validate(self, n_channels: int, adc_max: int) -> None:
@@ -59,7 +59,7 @@ class PressureReading:
 
 @dataclass
 class DistanceReading:
-    """VL53L1X"""
+    """HC-SR04 (초음파)"""
     ts: float
     distance_mm: int | None      # 센서가 주는 그대로 mm. 측정 실패면 None
     range_status: int            # 0 = 정상, 그 외 = 실패·불확실, -1 = 읽기 실패
@@ -175,8 +175,8 @@ class SensorHub:
     """
 
     def __init__(self, pressure: PressureSensor, distance: DistanceSensor,
-                 pose: PoseSource | None = None, *, n_channels: int = 8,
-                 adc_max: int = 1023, max_consecutive_errors: int = 20):
+                 pose: PoseSource | None = None, *, n_channels: int = 6,
+                 adc_max: int = 4095, max_consecutive_errors: int = 20):
         self.pressure = pressure
         self.distance = distance
         self.pose = pose

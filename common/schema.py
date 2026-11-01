@@ -44,6 +44,15 @@ class TiltState(str, Enum):
     UNKNOWN = "unknown"
 
 
+class SitPosition(str, Enum):
+    """의자에 앉은 위치 (앞 / 중간 / 뒤). 수집 라벨 축"""
+    FRONT = "front"                 # 의자 앞쪽에 걸터앉음
+    MIDDLE = "middle"
+    BACK = "back"                   # 등받이까지 깊게 앉음
+    NONE = "none"                   # 앉은 위치가 없음 (자리 비움)
+    UNKNOWN = "unknown"             # 판단 불가 (판단 결과에서만 사용)
+
+
 class Phase(str, Enum):
     """수집 단계"""
     BASELINE = "baseline"           # 세션 시작 후 바른 자세 기준 측정 (기본 10초)
@@ -62,16 +71,17 @@ class DistanceLevel(str, Enum):
 SEAT_LABELS = [s.value for s in SeatState if s is not SeatState.UNKNOWN]
 HEAD_LABELS = [s.value for s in HeadState if s is not HeadState.UNKNOWN]
 TILT_LABELS = [s.value for s in TiltState if s is not TiltState.UNKNOWN]
+POS_LABELS = [s.value for s in SitPosition if s is not SitPosition.UNKNOWN]
 
-# 기준 측정(baseline) 구간에서 쓰는 바른 자세 라벨
+# 기준 측정(baseline) 구간에서 쓰는 바른 자세 라벨. 앉은 위치(pos)는 사람이 정한 대로 둔다
 BASELINE_LABELS = {"seat": SeatState.NORMAL.value, "head": HeadState.NORMAL.value,
                    "tilt": TiltState.NONE.value}
 
 
-def check_labels(seat: str, head: str, tilt: str) -> None:
-    """수집 라벨 3개가 허용된 값인지 검사. 틀리면 LabelError"""
+def check_labels(seat: str, head: str, tilt: str, pos: str) -> None:
+    """수집 라벨 4개(좌면·목·기울기·앉은 위치)가 허용된 값인지 검사. 틀리면 LabelError"""
     for value, allowed, what in ((seat, SEAT_LABELS, "seat"), (head, HEAD_LABELS, "head"),
-                                 (tilt, TILT_LABELS, "tilt")):
+                                 (tilt, TILT_LABELS, "tilt"), (pos, POS_LABELS, "pos")):
         if value not in allowed:
             raise LabelError(f"{what} 라벨 '{value}'는 쓸 수 없음. 가능: {allowed}")
 

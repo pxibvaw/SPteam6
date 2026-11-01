@@ -59,8 +59,8 @@ TS_JITTER_SEC = 0.004           # replay CSV의 시각 흔들림 (실제 10Hz �
 def step_labels(step: Step) -> dict[str, str]:
     """기준 측정 구간은 바른 자세 라벨"""
     if step.phase == Phase.BASELINE.value:
-        return dict(BASELINE_LABELS)
-    return {"seat": step.seat, "head": step.head, "tilt": step.tilt}
+        return {**BASELINE_LABELS, "pos": step.pos}
+    return {"seat": step.seat, "head": step.head, "tilt": step.tilt, "pos": step.pos}
 
 
 class ScenarioPlayer:
@@ -76,7 +76,7 @@ class ScenarioPlayer:
         self.cfg = cfg
         self.scenario = scenario
         self.loop = loop
-        self.distance_sensor = (distance_sensor or cfg["distance"].get("sensor", "vl53l1x")).lower()
+        self.distance_sensor = (distance_sensor or cfg["distance"].get("sensor", "hc-sr04")).lower()
         self.empty_off_sec = float(cfg["thresholds"].get("empty_off_sec", EMPTY_OFF_SEC))
 
         self.rng = np.random.default_rng(seed)
@@ -241,7 +241,7 @@ def write_csv(cfg: dict, scenario: Scenario, out_dir: str | Path, *, seed: int |
         session_id=f"mock_{scenario.name}", subject="mock",
         date=start.isoformat(timespec="seconds"),
         camera_width=cfg["camera"]["width"], camera_height=cfg["camera"]["height"],
-        fsr_channels_used=list(range(n_channels)), baseline_seconds=baseline_sec,
+        fsr_channels_used=list(cfg["pressure"]["channels"]), baseline_seconds=baseline_sec,
         notes=f"더미 데이터: {scenario.description}",
         format_version=FORMAT_VERSION,
         extra={"scenario": scenario.name, "seed": seed, "distance_sensor": player.distance_sensor,
@@ -266,7 +266,7 @@ def write_csv(cfg: dict, scenario: Scenario, out_dir: str | Path, *, seed: int |
                 skipped += 1
                 continue
             lab = step_labels(step)
-            w.writerow(sample_to_row(sample, info, step.phase, lab["seat"], lab["head"], lab["tilt"]))
+            w.writerow(sample_to_row(sample, info, step.phase, lab["seat"], lab["head"], lab["tilt"], lab["pos"]))
             rows += 1
 
     info.end_date = datetime.fromtimestamp(t0 + scenario.total_sec).isoformat(timespec="seconds")

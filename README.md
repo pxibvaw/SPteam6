@@ -18,7 +18,7 @@ SPteam6/
 ├── app/                    # [앱] Android Studio 프로젝트 (Kotlin)
 │
 ├── hardware/               # [하드웨어]
-│   ├── sensors/            #   실제 센서 읽기 코드 (Picamera2, MCP3008+FSR, 거리센서)
+│   ├── sensors/            #   실제 센서 읽기 코드 (Picamera2, MCP3208+FSR, HC-SR04 거리센서)
 │   ├── server/             #   FastAPI + SQLite 서버 (앱에 데이터 전달)
 │   └── docs/               #   배선도, FSR 방석 배치도, 거치대 설계
 │
@@ -98,7 +98,7 @@ source .venv/bin/activate
 pip install -r requirements-pi.txt
 ```
 
-`sudo raspi-config` → Interface Options에서 **SPI**(MCP3008용)와 **I2C**(VL53L1X용)를 켠다.
+`sudo raspi-config` → Interface Options에서 **SPI**(MCP3208용)를 켠다. HC-SR04는 GPIO라 따로 켤 것이 없고, Echo 핀은 분압 회로로 3.3V로 낮춰서 연결한다.
 
 ### 설치 확인
 
@@ -112,22 +112,23 @@ python main.py --mode mock --seconds 3     # 가짜 센서 값이 출력되면 �
 
 | 센서 | 연결 | 설치 위치 |
 |---|---|---|
-| FSR 406 × 8 (+ 여분 1~2) | MCP3008 1개 → SPI (CE0) | 방석, 센서 위에 단단한 원판 |
-| VL53L1X (적외선 ToF 거리) | I2C | 모니터 위, 카메라와 함께 |
+| FSR 406 × 6 (MCP3208 CH0, 1, 3, 4, 6, 7. CH2·CH5는 쓰지 않음) | MCP3208 1개 → SPI (CE0) | 방석, 센서 위에 단단한 원판 |
+| HC-SR04 (초음파 거리) | GPIO (Trig 23, Echo 24, BCM) | 모니터 위, 카메라와 함께 |
 | 카메라 (정면, 1280×720) | CSI (Picamera2) | 모니터 위 |
 
 ## 데이터 수집
 
 ```bash
-python main.py --record --subject p1 --seat cross_left --head normal --tilt none --seconds 40
+python main.py --record --subject p1 --seat cross_left --head normal --tilt none --pos middle --seconds 40
 ```
 
 - 한 번 실행 = 세션 1개 → `data/raw/p1_날짜_시간.csv` + 같은 이름의 `.json`(세션 정보)
 - **처음 10초는 바른 자세로 앉기** (`phase=baseline`, 기준 측정). 그다음 지정한 자세 유지
-- 라벨은 3개를 따로 정한다 (값은 `common/schema.py`에 있는 것만)
+- 라벨은 4개를 따로 정한다 (값은 `common/schema.py`에 있는 것만)
   - `--seat`: `normal`, `lean_left`, `lean_right`, `cross_left`, `cross_right`, `empty`
   - `--head`: `normal`, `forward`(거북목)
   - `--tilt`: `none`, `left`, `right` (사람 기준 방향)
+  - `--pos`: `front`(의자 앞쪽), `middle`, `back`(등받이까지 깊게), `none`(자리 비움). 앉은 위치
 - 저장한 세션 재생: `python main.py --mode replay --file data/raw/파일이름.csv`
 - 필드 설명은 [`docs/data_format.md`](docs/data_format.md)
 

@@ -17,10 +17,9 @@ from common.sensors_base import (
     STATUS_OK, STATUS_READ_ERROR, DistanceReading, Landmark, PoseReading, PressureReading,
 )
 
-# 거리센서 종류별 흉내 (아직 확정 전: VL53L1X 또는 HC-SR04)
+# 거리센서 흉내 (HC-SR04로 확정)
 #   noise_mm: 측정 떨림, fail_prob: 평소 실패 확률, spike_prob: 평소 값 튐 확률
 DISTANCE_SENSORS = {
-    "vl53l1x": {"noise_mm": 8.0, "fail_prob": 0.02, "spike_prob": 0.0},
     "hc-sr04": {"noise_mm": 12.0, "fail_prob": 0.02, "spike_prob": 0.005},   # 초음파 반사로 가끔 튐
 }
 BASE_DISTANCE_MM = 600          # 바른 자세일 때 화면 거리 (mock_sensors 기본값과 같음)

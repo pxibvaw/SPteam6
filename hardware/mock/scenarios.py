@@ -4,7 +4,7 @@
 같은 시나리오를 두 가지로 쓴다 (hardware/mock/generator.py):
     - mock 생성기: 실시간으로 Sample을 만든다 (mock 서버)
     - replay CSV:  수집 CSV와 같은 형식 파일로 저장 (main.py --mode replay)
-                   열 수는 압력 채널 수에 따라 다름 (6채널 45칸, 8채널 47칸)
+                   열 수는 압력 채널 수에 따라 다름 (6채널 46칸, 7채널 47칸, 8채널 48칸)
 
 라벨 값은 common/schema.py에 있는 것만 쓴다. 라벨 = 그 순간 사람이 실제로 한 자세(정답).
 unknown은 라벨로 쓰지 않고, 센서 상태(pose_detected, distance_status, 빠진 줄)로 드러난다.
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from common.schema import LANDMARK_NAMES, Phase, SeatState, check_labels
+from common.schema import LANDMARK_NAMES, Phase, SeatState, SitPosition, check_labels
 from hardware.server.seating import PRIORITY, priority_rank   # noqa: F401 — 대표 자세 우선순위 (한 곳에서 관리)
 
 
@@ -24,6 +24,7 @@ class Step:
     seat: str = "normal"
     head: str = "normal"
     tilt: str = "none"
+    pos: str | None = None          # 앉은 위치. 안 쓰면 자리 비움은 "none", 그 외는 "middle"
     phase: str = Phase.RECORD.value
     extra_lean: str | None = None   # "left"/"right": 다리 꼬기와 함께 생긴 체중 편향 (압력 모양에만 반영)
                                     # seat 라벨은 하나만 쓸 수 있어서 우선순위가 높은 cross_*를 라벨로 쓴다
@@ -35,7 +36,10 @@ class Step:
     dead_channel: int | None = None # 이 FSR 채널의 연결이 끊김 → 그 채널만 0 근처
 
     def __post_init__(self):
-        check_labels(self.seat, self.head, self.tilt)
+        if self.pos is None:
+            object.__setattr__(self, "pos", SitPosition.NONE.value if self.seat == SeatState.EMPTY.value
+                               else SitPosition.MIDDLE.value)
+        check_labels(self.seat, self.head, self.tilt, self.pos)
         if self.seconds <= 0:
             raise ValueError(f"Step.seconds는 0보다 커야 함 (지금: {self.seconds})")
         for name in ("distance_fail", "distance_spike", "pressure_drop"):

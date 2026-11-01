@@ -6,10 +6,10 @@
     session_id = {subject}_{YYYYMMDD_HHMMSS}     예) p1_20261015_143012
     (같은 초에 또 시작하면 _2, _3을 붙여서 기존 파일을 덮어쓰지 않는다)
 
-CSV 한 줄 = 한 순간의 모든 센서 값 (총 47칸)
+CSV 한 줄 = 한 순간의 모든 센서 값 (압력 6채널이면 총 46칸, 채널이 하나 늘 때마다 1칸 증가)
     ts, session_id, subject, phase,
-    seat_label, head_label, tilt_label,
-    p0 ~ p7,
+    seat_label, head_label, tilt_label, pos_label,
+    p0 ~ p5   (압력 채널 수만큼, config.yaml의 pressure.channels 순서),
     distance_mm, distance_status,
     cam_ts, pose_detected,
     {부위}_x, {부위}_y, {부위}_z, {부위}_vis   (부위 7개: common.schema.LANDMARK_NAMES)
@@ -39,7 +39,7 @@ from common.sensors_base import Sample
 
 log = logging.getLogger(__name__)
 
-FORMAT_VERSION = 1          # CSV·세션 정보 형식이 바뀌면 올린다 (replay에서 확인)
+FORMAT_VERSION = 2          # CSV·세션 정보 형식이 바뀌면 올린다 (replay에서 확인)
 SUBJECT_RE = re.compile(r"^[A-Za-z0-9_-]{1,20}$")
 
 
@@ -57,7 +57,7 @@ class SessionInfo:
     date: str                        # 시작 시각 (ISO)
     camera_width: int                # 좌표(0~1)를 픽셀로 바꿀 때 필요
     camera_height: int
-    fsr_channels_used: list[int]     # 8개 중 실제로 쓴 채널 (선별 전에는 전부)
+    fsr_channels_used: list[int]     # MCP3208 채널 중 실제로 읽은 번호 (순서 = p0, p1, …)
     baseline_seconds: float
     chair: str = ""
     cushion: str = ""
@@ -79,7 +79,7 @@ class SessionInfo:
             date=t.isoformat(timespec="seconds"),
             camera_width=cfg["camera"]["width"],
             camera_height=cfg["camera"]["height"],
-            fsr_channels_used=list(range(cfg["pressure"]["n_channels"])),
+            fsr_channels_used=list(cfg["pressure"]["channels"]),
             baseline_seconds=cfg["thresholds"]["baseline_seconds"],
             **kw,
         )
@@ -118,7 +118,7 @@ LANDMARK_FIELDS = ("x", "y", "z", "vis")
 
 def csv_columns(n_channels: int) -> list[str]:
     cols = ["ts", "session_id", "subject", "phase",
-            "seat_label", "head_label", "tilt_label"]
+            "seat_label", "head_label", "tilt_label", "pos_label"]
     cols += [f"p{i}" for i in range(n_channels)]
     cols += ["distance_mm", "distance_status", "cam_ts", "pose_detected"]
     cols += [f"{name}_{f}" for name in LANDMARK_NAMES for f in LANDMARK_FIELDS]
@@ -131,8 +131,8 @@ def _num(v: float, fmt: str) -> str:
 
 
 def sample_to_row(s: Sample, info: SessionInfo, phase: str,
-                  seat: str, head: str, tilt: str) -> list:
-    row = [f"{s.ts:.3f}", info.session_id, info.subject, phase, seat, head, tilt]
+                  seat: str, head: str, tilt: str, pos: str) -> list:
+    row = [f"{s.ts:.3f}", info.session_id, info.subject, phase, seat, head, tilt, pos]
     row += [int(v) for v in s.pressure.values]
     d = s.distance
     row += ["" if d.distance_mm is None else int(d.distance_mm), d.range_status]
@@ -154,9 +154,10 @@ def sample_to_row(s: Sample, info: SessionInfo, phase: str,
 class SessionRecorder:
     """사용 예:
         info = SessionInfo.new("p1", cfg, chair="학교 의자")
-        with SessionRecorder("data/raw", info, n_channels=8) as rec:
-            rec.write(hub.read(), seat="cross_left", head="normal", tilt="none")
-    처음 baseline_seconds 동안은 라벨과 상관없이 phase=baseline, 바른 자세 라벨로 저장된다.
+        with SessionRecorder("data/raw", info, n_channels=6) as rec:
+            rec.write(hub.read(), seat="cross_left", head="normal", tilt="none", pos="middle")
+    처음 baseline_seconds 동안은 phase=baseline, seat/head/tilt는 바른 자세 라벨로 저장된다
+    (앉은 위치 pos는 넘긴 값 그대로).
     with 문을 쓰면 오류나 Ctrl+C로 끝나도 파일이 닫히고 세션 정보에 종료 상태가 남는다.
     """
 
@@ -197,7 +198,7 @@ class SessionRecorder:
         in_baseline = ts - self._t0 < self.info.baseline_seconds
         return Phase.BASELINE.value if in_baseline else Phase.RECORD.value
 
-    def write(self, sample: Sample, seat: str, head: str, tilt: str,
+    def write(self, sample: Sample, seat: str, head: str, tilt: str, pos: str,
               phase: str | None = None) -> str:
         """phase를 안 주면 sample.ts로 정한다. 미리 phase_at()으로 정했다면 같은 값을 넘길 것."""
         if self._closed:
@@ -209,9 +210,9 @@ class SessionRecorder:
             raise RecorderError(f"phase '{phase}'는 baseline 또는 record여야 함")
         if phase == Phase.BASELINE.value:
             seat, head, tilt = BASELINE_LABELS["seat"], BASELINE_LABELS["head"], BASELINE_LABELS["tilt"]
-        check_labels(seat, head, tilt)
+        check_labels(seat, head, tilt, pos)
         try:
-            self._w.writerow(sample_to_row(sample, self.info, phase, seat, head, tilt))
+            self._w.writerow(sample_to_row(sample, self.info, phase, seat, head, tilt, pos))
             self._f.flush()                       # 매 줄 바로 저장
         except OSError as e:
             raise RecorderError(f"CSV 저장 실패 (디스크 공간 확인): {e}") from None

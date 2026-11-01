@@ -86,7 +86,7 @@ class Current(BaseModel):
     distance_mm: int | None = Field(None, description="화면 거리 (mm). 측정 실패면 null")
     distance_level: DistanceLevel = Field(..., description="ok 50cm 이상 / caution 40~50cm / warning 40cm 미만 / unknown")
     closer_than_baseline: bool | None = Field(None, description="기준보다 10cm 이상 가까운지. 기준값 없으면 null")
-    pressure: list[int] = Field(..., description="FSR 채널별 원래 값 (0~1023). 순서 = config.yaml pressure.positions")
+    pressure: list[int] = Field(..., description="FSR 채널별 원래 값 (0~4095, MCP3208 12bit). 순서 = config.yaml pressure.positions")
     pressure_ratio: list[float] | None = Field(None, description="채널별 압력 비율 (합 1). 자리 비움이면 null")
     center_of_pressure: Point | None = Field(None, description="압력 중심. x 왼쪽 -1 ~ 오른쪽 +1, "
                                                                "y 뒤 -1 ~ 앞 +1 (사람 기준). 자리 비움이면 null")
@@ -467,7 +467,7 @@ class Layout(BaseModel):
     """센서 배치 — 거의 바뀌지 않으니 한 번 받아 두고, layout_id가 바뀌면 다시 받는다"""
     layout_id: int | None = Field(None, description="DB 없이 켠 서버면 null")
     n_channels: int
-    channel_map: list[int] = Field(..., description="읽는 MCP3008 채널 (순서 = /current의 pressure, pressure_ratio)")
+    channel_map: list[int] = Field(..., description="읽는 MCP3208 채널 (순서 = /current의 pressure, pressure_ratio)")
     positions: list[list[float]] = Field(..., description="채널별 [x, y]. x 왼쪽 -1 ~ 오른쪽 +1, y 뒤 -1 ~ 앞 +1 (사람 기준)")
 
 

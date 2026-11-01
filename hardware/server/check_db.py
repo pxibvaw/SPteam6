@@ -102,8 +102,8 @@ def main() -> int:
               dict(env.q("SELECT key, value FROM settings")))
         check("다시 실행 → 적용 없음, 백업 없음", migrate(env.db, db) == [] and not db.with_suffix(".db.bak").exists(),
               "[]")
-        check("센서 배치 1개 (8채널, channel_map 0~7)",
-              env.q("SELECT n_channels, channel_map FROM sensor_layouts")[0][:] == (8, "[0,1,2,3,4,5,6,7]"),
+        check("센서 배치 1개 (6채널, channel_map [0,1,3,4,6,7])",
+              env.q("SELECT n_channels, channel_map FROM sensor_layouts")[0][:] == (6, "[0,1,3,4,6,7]"),
               tuple(env.q("SELECT n_channels, channel_map FROM sensor_layouts")[0]))
 
         print("\n2) 첫 세션: 기준 자세 (23:58:30 시작 → 자정 넘김)")
@@ -166,7 +166,7 @@ def main() -> int:
               [(x[0][5:], x[1]) for x in chunks])
         check("원본 샘플 수 = 판단한 순간 (일시정지 10초 제외 약 1900)", 1850 <= n_raw <= 1910, n_raw)
         a = unpack_chunk(env.q("SELECT data FROM raw_chunks ORDER BY start_ts LIMIT 1")[0][0])
-        check("덩어리 풀기: 압력 (n, 8), 좌표 없음", a["pressure"].shape[1] == 8 and "landmarks" not in a,
+        check("덩어리 풀기: 압력 (n, 6), 좌표 없음", a["pressure"].shape[1] == 6 and "landmarks" not in a,
               f"{a['pressure'].shape}, {sorted(a)}")
         per_min = (tx1 - tx0) / ((200 - t_tx0) / 60)
         check("쓰기 횟수: 분당 트랜잭션", per_min <= 3, f"{tx1 - tx0}번 / {200 - t_tx0:.0f}초 = 분당 {per_min:.1f}번")
@@ -197,21 +197,21 @@ def main() -> int:
               and rows[1][3] == 1, rows[-1])
         env.c.post("/session/stop")
 
-        print("\n6) 채널 수 변경 (8 → 6) — 같은 DB")
+        print("\n6) 채널 수 변경 (6 → 7) — 같은 DB")
         ft6 = FakeTime()
         ft6.m, ft6.w = ft.m + 100, ft.w + 100
-        env6 = Env(with_channels(cfg, 6), ft6, db)
+        env6 = Env(with_channels(cfg, 7), ft6, db)
         layouts = [tuple(x) for x in env6.q("SELECT id, n_channels, channel_map FROM sensor_layouts ORDER BY id")]
-        check("배치 2개 (8채널, 6채널)", [x[1] for x in layouts] == [8, 6], layouts)
+        check("배치 2개 (6채널, 7채널)", [x[1] for x in layouts] == [6, 7], layouts)
         env6.sync(env.rt.clock.now() + 100)
         r = env6.c.post("/session/start")
-        check("저장된 기준은 8채널이라 못 씀 → initial로 새로 잼", r.json()["baseline"]["kind"] == "initial",
+        check("저장된 기준은 6채널이라 못 씀 → initial로 새로 잼", r.json()["baseline"]["kind"] == "initial",
               r.json()["baseline"]["kind"])
         env6.run_to(70)
         env6.c.post("/session/stop")
         shapes = sorted({(lid, unpack_chunk(d)["pressure"].shape[1])
                          for lid, d in env6.q("SELECT layout_id, data FROM raw_chunks")})
-        check("예전(8채널)·새(6채널) 덩어리 둘 다 풀림", shapes == [(1, 8), (2, 6)], shapes)
+        check("예전(6채널)·새(7채널) 덩어리 둘 다 풀림", shapes == [(1, 6), (2, 7)], shapes)
 
         print("\n7) 비정상 종료 → 다시 켬")
         env6.run_for(2)
@@ -221,7 +221,7 @@ def main() -> int:
         crash_at = env6.rt.clock.now()                      # 여기서 정지 없이 꺼짐
         ft7 = FakeTime()
         ft7.m, ft7.w = ft6.m + 30, ft6.w + 30
-        env7 = Env(with_channels(cfg, 6), ft7, db)
+        env7 = Env(with_channels(cfg, 7), ft7, db)
         s = env7.q("SELECT end_reason, ended_at FROM sessions ORDER BY started_at DESC LIMIT 1")[0]
         check("열린 세션 → crash, 끝 = 마지막 저장 시각", s[0] == "crash" and abs(s[1] - last_seen) < 1e-6,
               f"{s[0]}, 꺼진 시각보다 {crash_at - s[1]:.1f}초 앞 (최대 1분 손실)")

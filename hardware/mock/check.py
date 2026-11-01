@@ -21,7 +21,7 @@ from common.config import ConfigError, load_config
 from common.replay import ReplayError, ReplaySource
 from hardware.mock.generator import EMPTY_OFF_SEC
 
-GAP_SEC = 0.15                  # 줄 간격이 이보다 길면 빠진 순간 (압력 읽기 실패)
+GAP_FACTOR = 1.5                # 줄 간격이 1/hz의 이 배수보다 길면 빠진 순간 (압력 읽기 실패)
 
 
 def _clock(ts: float) -> str:
@@ -82,7 +82,7 @@ def check(path: str, cfg: dict) -> bool:
               f"거리센서 {e.get('distance_sensor', '-')} | {src.info.notes}")
     days = "" if _clock(ts[0])[:10] == _clock(ts[-1])[:10] else "  ← 날짜가 바뀜"
     print(f"시각  {_clock(ts[0])} ~ {_clock(ts[-1])}{days}")
-    gaps = int(np.sum(np.diff(ts) > GAP_SEC))
+    gaps = int(np.sum(np.diff(ts) > GAP_FACTOR * dt))
     print(f"줄 수 {len(items)} (깨진 줄 {src.skipped}, 빠진 순간 {gaps}) | 압력 {len(src.channels)}채널 "
           f"{'' if len(src.channels) == n_channels else f'⚠️ config.yaml은 {n_channels}채널 → replay 안 됨'}")
     p = np.array([s.pressure.values for s, _ in items])
@@ -93,7 +93,7 @@ def check(path: str, cfg: dict) -> bool:
     if exp.get("steps"):
         for st in exp["steps"]:
             part = [it for it in items if st["start"] <= it[0].ts < st["end"]]
-            labels = f"{st['seat']}/{st['head']}/{st['tilt']}"
+            labels = f"{st['seat']}/{st['head']}/{st['tilt']}/{st['pos']}"
             extra = f" +lean_{st['extra_lean']}" if st["extra_lean"] else ""
             faults = f" [{', '.join(st['faults'])}]" if st["faults"] else ""
             print(f"  {st['start'] - t0:6.1f}~{st['end'] - t0:6.1f}  {st['phase']:<8} "

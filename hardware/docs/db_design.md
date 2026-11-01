@@ -74,7 +74,7 @@
 |---|---|
 | `id` PK | |
 | `n_channels` | 6 또는 8 |
-| `channel_map` | JSON — 읽는 **MCP3008 채널 번호 목록** (순서 = p0, p1, …). 예: 8개 중 6개 선별 `[0, 1, 2, 3, 6, 7]` |
+| `channel_map` | JSON — 읽는 **MCP3208 채널 번호 목록** (순서 = p0, p1, …). 지금 `[0, 1, 3, 4, 6, 7]` (config.yaml `pressure.channels`) |
 | `positions` | JSON `[[x, y], …]` (길이 = n_channels) |
 | `created_at`, `note` | |
 

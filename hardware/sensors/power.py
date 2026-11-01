@@ -1,6 +1,6 @@
 """센서 전원 인터페이스 — 서버가 센서를 끄고 켤 때 쓰는 약속
 
-실제 센서 클래스(Pi Camera, HC-SR04, MCP3008)가 Switchable을 구현하면
+실제 센서 클래스(Pi Camera, HC-SR04, MCP3208)가 Switchable을 구현하면
 서버의 전원 정책(hardware/server/power.py)이 그대로 끄고 켤 수 있다.
     카메라: power_off()에서 picamera2 멈춤 + MediaPipe 처리 중단, power_on()에서 다시 시작
     거리:   power_off()에서 트리거 펄스를 그만 보냄

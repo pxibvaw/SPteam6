@@ -5,7 +5,7 @@
 
 사용 예:
     hub = MockSensorHub(cfg)
-    hub.set_labels(seat="cross_right", head="forward", tilt="left")
+    hub.set_labels(seat="cross_right", head="forward", tilt="left", pos="middle")
     sample = hub.read()
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ from __future__ import annotations
 import numpy as np
 
 from common.config import fsr_positions
-from common.schema import HeadState, SeatState, TiltState, check_labels
+from common.schema import HeadState, SeatState, SitPosition, TiltState, check_labels
 from common.sensors_base import (
     CameraSensor, DistanceReading, DistanceSensor, FrameReading, Landmark,
     PoseReading, PoseSource, PressureReading, PressureSensor, SensorHub, now,
@@ -27,7 +27,7 @@ class MockPressureSensor(PressureSensor):
     기대기:    기댄 쪽 앞·뒤 모두 ↑
     """
 
-    def __init__(self, positions: np.ndarray, adc_max: int = 1023,
+    def __init__(self, positions: np.ndarray, adc_max: int = 4095,
                  noise: float = 20.0, seed: int | None = None):
         self.pos = np.asarray(positions, dtype=float)
         self.adc_max = adc_max
@@ -59,7 +59,7 @@ class MockPressureSensor(PressureSensor):
 
 
 class MockDistanceSensor(DistanceSensor):
-    """VL53L1X 흉내. 가끔 측정 실패(range_status ≠ 0)를 섞어서 필터 테스트용으로 씀"""
+    """HC-SR04 흉내. 가끔 측정 실패(range_status ≠ 0)를 섞어서 필터 테스트용으로 씀"""
 
     def __init__(self, base_mm: int = 600, noise_mm: float = 8.0,
                  fail_prob: float = 0.03, seed: int | None = None):
@@ -145,8 +145,10 @@ class MockSensorHub(SensorHub):
             n_channels=pr["n_channels"], adc_max=pr["adc_max"],
         )
 
-    def set_labels(self, seat: str = "normal", head: str = "normal", tilt: str = "none") -> None:
-        check_labels(seat, head, tilt)
+    def set_labels(self, seat: str = "normal", head: str = "normal", tilt: str = "none",
+                   pos: str = SitPosition.MIDDLE.value) -> None:
+        """pos(앉은 위치)는 검사만 한다. 가짜 압력·거리는 앉은 위치를 흉내 내지 않는다."""
+        check_labels(seat, head, tilt, pos)
         self.pressure.label = seat
         self.pose.head = head
         self.pose.tilt = tilt

@@ -17,8 +17,8 @@
 
 | 센서 | 형식 | 필드 |
 |---|---|---|
-| 압력 FSR 406 × 8 (MCP3008) | `PressureReading` | `ts`, `values` (int × 8, 0~1023 원래 값) |
-| 거리 VL53L1X | `DistanceReading` | `ts`, `distance_mm` (int, 실패면 None), `range_status` (0 = 정상) |
+| 압력 FSR 406 × 6 (MCP3208) | `PressureReading` | `ts`, `values` (int × 채널 수, 0~4095 원래 값. 12bit) |
+| 거리 HC-SR04 | `DistanceReading` | `ts`, `distance_mm` (int, 실패면 None), `range_status` (0 = 정상) |
 | 카메라 (정면) | `FrameReading` | `ts`, `image` (BGR) — **저장하지 않음** |
 | 상체 점 (카메라 → MediaPipe) | `PoseReading` | `ts`, `detected`, `points` (부위 7개 × x, y, z, visibility) |
 
@@ -46,7 +46,7 @@ PosturePal(MIT)의 정면 웹캠 상체 8개 점을 따른다.
 ## ② 수집 CSV — `common/recorder.py`
 
 파일: `data/raw/{session_id}.csv`, `session_id = {subject}_{YYYYMMDD_HHMMSS}`
-한 줄 = 한 순간, **총 47칸**.
+한 줄 = 한 순간, 압력 6채널이면 **총 46칸** (채널 수가 하나 늘 때마다 1칸 증가).
 
 | 그룹 | 컬럼 | 값 |
 |---|---|---|
@@ -55,13 +55,17 @@ PosturePal(MIT)의 정면 웹캠 상체 8개 점을 따른다.
 | 좌면 라벨 | `seat_label` | `normal` `lean_left` `lean_right` `cross_left` `cross_right` `empty` |
 | 목 라벨 | `head_label` | `normal` `forward`(거북목) |
 | 기울기 라벨 | `tilt_label` | `none` `left` `right` |
-| 압력 | `p0` ~ `p7` | 0~1023 |
+| 앉은 위치 라벨 | `pos_label` | `front`(앞) `middle`(중간) `back`(뒤) `none`(자리 비움) |
+| 압력 | `p0` ~ `p5` (채널 수만큼) | 0~4095. `pN` ↔ ADC 채널은 세션 정보의 `fsr_channels_used` |
 | 거리 | `distance_mm`, `distance_status` | 실패면 `distance_mm` 빈칸 |
 | 카메라 상태 | `cam_ts`, `pose_detected` | 카메라 없으면 `cam_ts` 빈칸 |
 | 카메라 좌표 | `{부위}_x`, `{부위}_y`, `{부위}_z`, `{부위}_vis` | 부위 7개 × 4 = 28칸 |
 
 - `cross_left` = 왼다리를 위로 꼰 다리 꼬기, `cross_right` = 오른다리를 위로.
 - 거북목과 기울기는 따로 라벨링한다 (동시에 일어날 수 있어서).
+- `pos_label`은 의자에 앉은 위치다. `baseline` 구간에도 바꾸지 않고 사람이 정한 값을 쓴다 (seat/head/tilt만 바른 자세로 고정).
+  자리 비움(`seat_label=empty`)은 `none`을 쓴다. 판단 결과(`PostureEvent`)에는 아직 앉은 위치가 없다.
+- 형식 버전 2부터 `pos_label` 열이 있다. 버전 1 파일(`pos_label` 없음)은 replay가 "예전 형식"으로 거절한다.
 
 ## ③ 세션 정보 — `data/raw/{session_id}.json`
 
@@ -69,7 +73,7 @@ PosturePal(MIT)의 정면 웹캠 상체 8개 점을 따른다.
 |---|---|
 | `session_id`, `subject`, `date` | 기본 식별 |
 | `camera_width`, `camera_height` | 좌표를 픽셀로 바꿀 때 사용 |
-| `fsr_channels_used` | 8개 중 실제로 쓴 채널 (6개 선별 후 변경) |
+| `fsr_channels_used` | 실제로 읽은 MCP3208 채널 번호 (순서 = p0, p1, …). 지금 `[0, 1, 3, 4, 6, 7]` |
 | `baseline_seconds` | 기준 측정 시간 |
 | `chair`, `cushion`, `notes` | 의자·방석, 특이사항 |
 | `format_version` | 파일 형식 버전 (형식이 바뀌면 올림, 재생할 때 확인) |
@@ -101,7 +105,7 @@ DB에서 읽을 때는 `PostureEvent.from_dict(d)`를 쓰면 같은 검사를 �
 | 상황 | 동작 | 오류 이름 |
 |---|---|---|
 | `config.yaml` 없음·문법 오류·값 잘못됨 (예: 채널 9개, 50cm ≤ 40cm) | 어느 항목이 왜 틀렸는지 알려주고 종료 | `ConfigError` |
-| 압력 한 번 읽기 실패, 채널 수·값 범위(0~1023) 이상 | 그 순간만 건너뛰고 계속 | `SampleSkipped` |
+| 압력 한 번 읽기 실패, 채널 수·값 범위(0~4095) 이상 | 그 순간만 건너뛰고 계속 | `SampleSkipped` |
 | 거리 읽기 실패 | `distance_mm` 빈칸, `distance_status = -1`로 기록하고 계속 | — |
 | 카메라 읽기 실패 | `pose_detected = 0`으로 기록하고 계속 | — |
 | 같은 센서가 20번 연속 실패 | 배선·연결 확인 메시지와 함께 종료 | `SensorError` |

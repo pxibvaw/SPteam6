@@ -5,7 +5,7 @@
     cfg = load_config()
     hz = cfg["sampling"]["hz"]
     raw_dir = repo_path(cfg["paths"]["raw"])
-    pos = fsr_positions(cfg)          # (8, 2) 배열
+    pos = fsr_positions(cfg)          # (6, 2) 배열
 
 설정이 잘못되면 ConfigError가 어느 항목이 왜 틀렸는지 알려준다.
 """
@@ -19,7 +19,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 MODES = ("mock", "replay", "real")
-MCP3008_CHANNELS = 8
+ADC_CHANNELS = 8        # MCP3208 = 8채널 (읽을 수 있는 채널 번호는 0~7)
 
 
 class ConfigError(Exception):
@@ -89,10 +89,17 @@ def validate_config(cfg: dict) -> None:
 
     _number(cfg, "sampling.hz", min_value=0.1, max_value=100)
 
-    # 압력: MCP3008 1개 = 8채널
-    n = _number(cfg, "pressure.n_channels", min_value=1, max_value=MCP3008_CHANNELS,
+    # 압력: MCP3208 1개 = 8채널 중 n_channels개를 읽는다
+    n = _number(cfg, "pressure.n_channels", min_value=1, max_value=ADC_CHANNELS,
                 integer=True)
     _number(cfg, "pressure.adc_max", min_value=1, integer=True)
+    chs = _get(cfg, "pressure.channels")
+    if (not isinstance(chs, list) or len(chs) != n
+            or not all(isinstance(c, int) and not isinstance(c, bool) and 0 <= c < ADC_CHANNELS
+                       for c in chs)
+            or len(set(chs)) != len(chs)):
+        raise ConfigError(f"'pressure.channels'는 채널 수({n})만큼의 서로 다른 ADC 채널 번호 "
+                          f"(0~{ADC_CHANNELS - 1})여야 함 (지금: {chs!r})")
     pos = _get(cfg, "pressure.positions")
     if not isinstance(pos, list) or len(pos) != n:
         got = len(pos) if isinstance(pos, list) else pos
@@ -110,6 +117,8 @@ def validate_config(cfg: dict) -> None:
     if lo >= hi:
         raise ConfigError(f"'distance.min_mm'({lo})가 'distance.max_mm'({hi})보다 작아야 함")
     _number(cfg, "distance.median_window", min_value=1, integer=True)
+    _number(cfg, "distance.trigger_pin", min_value=0, integer=True)
+    _number(cfg, "distance.echo_pin", min_value=0, integer=True)
 
     # 카메라
     _number(cfg, "camera.width", min_value=1, integer=True)

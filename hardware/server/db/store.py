@@ -102,7 +102,7 @@ class Recorder:
     def _ensure_layout(self, cfg: dict) -> tuple[int, int]:
         pr = cfg["pressure"]
         n = pr["n_channels"]
-        channel_map = _json(pr.get("channels", list(range(n))))     # config.yaml에 없으면 0 ~ n-1
+        channel_map = _json(pr["channels"])                 # 읽는 ADC 채널 번호 (순서 = p0, p1, …)
         positions = _json(pr["positions"])
         row = self.conn.execute("SELECT id FROM sensor_layouts WHERE channel_map = ? AND positions = ?",
                                 (channel_map, positions)).fetchone()

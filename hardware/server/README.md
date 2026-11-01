@@ -39,7 +39,7 @@
 # 더미 데이터 (replay CSV)
 python -m hardware.mock.generator --list                 # 시나리오 목록
 python -m hardware.mock.generator --all                  # 전부 → data/synthetic/mock_*.csv + .json
-python -m hardware.mock.generator --scenario demo --distance-sensor hc-sr04
+python -m hardware.mock.generator --scenario demo
 python main.py --mode replay --file data/synthetic/mock_demo.csv
 
 # mock 서버
@@ -200,11 +200,11 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 
 | # | 항목 | 지금 코드 | 누구와 |
 |---|---|---|---|
-| 1 | 거리센서 | 문서·`config.yaml`은 VL53L1X, 하드웨어 확정 목록은 HC-SR04/미정 → mock은 둘 다 흉내 (`--distance-sensor`) | 전체 |
+| 1 | 거리센서 | ~~VL53L1X/HC-SR04 미정~~ → **HC-SR04로 확정**, `config.yaml`·mock 반영 완료 | 전체 |
 | 2 | 홈 "오른쪽 편향 비율 33%" | 무엇의 비율인지 미정 → 대표 자세 비율(`daily_posture.ratio`)과 좌우 편향(`lean_balance.right_ratio`)을 둘 다 줌 | 앱 |
 | 3 | `postures`에 기울기 포함 | `tilt_left`/`tilt_right`도 나쁜 자세로 넣음 | 전체 |
 | 4 | 3초 필터 | 서버가 주는 상태는 3초 필터를 거친 값 (`pending`에 대기 중인 변화) | AI |
-| 5 | FSR 개수 | 수집 단계 8칸 → 실험 후 6칸 선별, **최종 6칸** (2열 × 3행). `config.yaml`은 아직 8 → 6채널 제안값은 `../mock/README.md` (공용 파일이라 팀 상의 후 변경) | AI |
+| 5 | FSR 개수 | **6칸**(MCP3208 CH0, 1, 3, 4, 6, 7; CH2·CH5 제외, 2열 × 3행)을 `config.yaml`에 반영. 배치가 바뀌면 `channels`·`positions` 변경 | AI |
 | 6 | API 문서 위치 | `hardware/server/openapi.yaml`. 확정되면 `docs/`로 옮길지 | 전체 |
 | 7 | `.gitignore` | `*.db`만 무시 → SQLite의 `-wal`·`-shm`·`.bak`도 무시하도록 `*.db-wal`, `*.db-shm`, `*.db.bak` 추가 제안 (mock DB는 이미 무시되는 `data/synthetic/`에 둠) | 전체 |
 | 8 | 기울어진 자세 방향 (주간 비교) | 가정: 이번 주 왼쪽·오른쪽 기울기 합이 큰 쪽의 하루 평균을 지난주 같은 방향과 비교 (`../docs/db_design.md` 9장) | 앱 |

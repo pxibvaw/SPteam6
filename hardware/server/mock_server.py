@@ -442,7 +442,7 @@ def create_app(cfg: dict, scenario: str = "demo", loop: bool = True, seed: int |
                 "baseline_ready": runtime.current_baseline is not None,
                 "sensors": {
                     "pressure": {"ok": e.sensor_ok("pressure", ts),
-                                 "detail": f"FSR {cfg['pressure']['n_channels']}채널 (MCP3008)"},
+                                 "detail": f"FSR {cfg['pressure']['n_channels']}채널 (MCP3208)"},
                     "distance": {"ok": e.sensor_ok("distance", ts), "detail": runtime.player.distance_sensor},
                     "camera": {"ok": e.sensor_ok("camera", ts), "detail": "Pi Camera V2"},
                 },
@@ -570,7 +570,7 @@ def create_app(cfg: dict, scenario: str = "demo", loop: bool = True, seed: int |
             return reports.layout(runtime.recorder.layout_id)
         pr = cfg["pressure"]
         return {"layout_id": None, "n_channels": pr["n_channels"],
-                "channel_map": pr.get("channels", list(range(pr["n_channels"]))), "positions": pr["positions"]}
+                "channel_map": pr["channels"], "positions": pr["positions"]}
 
     @app.post("/records/reset", response_model=RecordsResetResult, tags=["기록"], responses=ERRORS,
               summary="기록 초기화 (설정·기준 자세는 유지). 세션이 없을 때만, 확인 문구 필요")

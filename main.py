@@ -2,7 +2,7 @@
 
 사용 예 (저장소 최상위에서 실행):
     python main.py --mode mock --seconds 5          # 가짜 센서로 5초
-    python main.py --mode mock --record --seat cross_left --head forward --tilt none --seconds 40
+    python main.py --mode mock --record --seat cross_left --head forward --tilt none --pos middle --seconds 40
         # data/raw에 세션 CSV + JSON 저장 (처음 10초는 기준 자세, 이후 지정한 자세)
     python main.py --mode replay --file data/raw/p1_20261015_143012.csv
 
@@ -25,7 +25,7 @@ from common.config import ConfigError, load_config, repo_path
 from common.mock_sensors import MockSensorHub
 from common.recorder import SUBJECT_RE, RecorderError, SessionInfo, SessionRecorder
 from common.replay import ReplayError, ReplayFinished, ReplaySource
-from common.schema import HEAD_LABELS, SEAT_LABELS, TILT_LABELS, LabelError, check_labels
+from common.schema import HEAD_LABELS, POS_LABELS, SEAT_LABELS, TILT_LABELS, LabelError, check_labels
 from common.sensors_base import SampleSkipped, SensorError
 
 log = logging.getLogger("sitsense")
@@ -34,7 +34,7 @@ log = logging.getLogger("sitsense")
 def build_source(cfg: dict, args):
     if args.mode == "mock":
         hub = MockSensorHub(cfg)
-        hub.set_labels(args.seat, args.head, args.tilt)
+        hub.set_labels(args.seat, args.head, args.tilt, args.pos)
         return hub
     if args.mode == "replay":
         path = args.file or cfg["replay"]["file"]
@@ -67,6 +67,8 @@ def parse_args(cfg: dict) -> argparse.Namespace:
     ap.add_argument("--seat", choices=SEAT_LABELS, default="normal", help="좌면 자세 라벨")
     ap.add_argument("--head", choices=HEAD_LABELS, default="normal", help="목 자세 라벨")
     ap.add_argument("--tilt", choices=TILT_LABELS, default="none", help="좌우 기울기 라벨")
+    ap.add_argument("--pos", choices=POS_LABELS, default="middle",
+                    help="앉은 위치 라벨 (front 앞 / middle 중간 / back 뒤 / none 자리 비움)")
     ap.add_argument("--chair", default="", help="세션 정보: 의자")
     ap.add_argument("--cushion", default="", help="세션 정보: 방석")
     ap.add_argument("--notes", default="", help="세션 정보: 특이사항")
@@ -82,7 +84,7 @@ def parse_args(cfg: dict) -> argparse.Namespace:
 
 
 def run(cfg: dict, args: argparse.Namespace) -> None:
-    check_labels(args.seat, args.head, args.tilt)
+    check_labels(args.seat, args.head, args.tilt, args.pos)
     source = build_source(cfg, args)
 
     with contextlib.ExitStack() as stack:
@@ -108,9 +110,9 @@ def run(cfg: dict, args: argparse.Namespace) -> None:
                 if isinstance(source, MockSensorHub):
                     # 기준 측정 중에는 가짜 센서도 바른 자세 값을 내게 함 (실제로는 사람이 바르게 앉음)
                     if phase == "baseline":
-                        source.set_labels()
+                        source.set_labels(pos=args.pos)
                     else:
-                        source.set_labels(args.seat, args.head, args.tilt)
+                        source.set_labels(args.seat, args.head, args.tilt, args.pos)
 
                 try:
                     sample = source.read()
@@ -125,7 +127,7 @@ def run(cfg: dict, args: argparse.Namespace) -> None:
 
                 line = fmt(sample)
                 if recorder:
-                    phase = recorder.write(sample, args.seat, args.head, args.tilt, phase=phase)
+                    phase = recorder.write(sample, args.seat, args.head, args.tilt, args.pos, phase=phase)
                     if phase != last_phase:
                         log.info("── %s ──", phase)
                         last_phase = phase

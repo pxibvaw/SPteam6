@@ -795,7 +795,7 @@ components:
             type: integer
           type: array
           title: Pressure
-          description: FSR 채널별 원래 값 (0~1023). 순서 = config.yaml pressure.positions
+          description: FSR 채널별 원래 값 (0~4095, MCP3208 12bit). 순서 = config.yaml pressure.positions
         pressure_ratio:
           anyOf:
           - items:
@@ -1419,7 +1419,7 @@ components:
             type: integer
           type: array
           title: Channel Map
-          description: 읽는 MCP3008 채널 (순서 = /current의 pressure, pressure_ratio)
+          description: 읽는 MCP3208 채널 (순서 = /current의 pressure, pressure_ratio)
         positions:
           items:
             items:
