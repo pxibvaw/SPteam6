@@ -64,8 +64,13 @@ class MockRuntime:
     """
 
     def __init__(self, cfg: dict, scenario: str = "demo", loop: bool = True, seed: int | None = None,
-                 clock: AppClock | None = None, db_path: str | Path | None = None):
+                 clock: AppClock | None = None, db_path: str | Path | None = None, engine: str = "fake"):
         self.cfg = cfg
+        if engine == "ai":                                  # mock 데이터도 AI 판정 엔진으로 (파이프라인 확인용)
+            from hardware.server.ai_engine import AiEngine
+            self.engine_cls = AiEngine
+        elif engine != "fake":
+            raise ValueError(f"engine은 fake 또는 ai (지금: {engine})")
         self.period = 1.0 / cfg["sampling"]["hz"]
         self.lock = threading.RLock()
         self._stop = threading.Event()
@@ -395,9 +400,10 @@ REPORT_ERRORS = {**ERRORS, 503: {"model": ErrorResponse, "description": "DB 없�
 
 def create_app(cfg: dict, scenario: str = "demo", loop: bool = True, seed: int | None = None,
                *, clock: AppClock | None = None, autostart: bool = False,
-               db_path: str | Path | None = None, runtime: MockRuntime | None = None) -> FastAPI:
+               db_path: str | Path | None = None, runtime: MockRuntime | None = None,
+               engine: str = "fake") -> FastAPI:
     """runtime을 주면(real 모드) 그걸 쓰고, 없으면 mock 시나리오 런타임을 만든다"""
-    runtime = runtime or MockRuntime(cfg, scenario, loop, seed, clock=clock, db_path=db_path)
+    runtime = runtime or MockRuntime(cfg, scenario, loop, seed, clock=clock, db_path=db_path, engine=engine)
     if autostart:                                   # 예전처럼 바로 데이터: PC 시계로 동기화 + 세션 시작
         runtime.clock.sync(time.time(), "Asia/Seoul")
         runtime.start_session()
@@ -645,6 +651,8 @@ def main() -> int:
                     help="SQLite 파일 (기본: mock은 data/synthetic/sitsense_mock.db, "
                          "real은 data/sitsense.db — 서로 섞이지 않게 따로. *.db는 git에서 무시됨)")
     ap.add_argument("--no-db", action="store_true", help="저장하지 않음")
+    ap.add_argument("--engine", choices=["ai", "fake"], default="ai",
+                    help="mock 모드의 판정: ai = AI 엔진(실제와 같은 경로, 기본), fake = 시나리오 정답을 그대로 (앱 화면 데모용)")
     ap.add_argument("--camera", choices=["none", "picam", "webcam"], default="none",
                     help="real 모드의 카메라: none(없이) / picam(Pi 카메라) / webcam(시험용)")
     ap.add_argument("--rotate180", action="store_true", help="카메라를 거꾸로 달았을 때")
@@ -677,7 +685,7 @@ def main() -> int:
         app = create_app(cfg, autostart=args.autostart, runtime=runtime)
     else:
         app = create_app(cfg, args.scenario, loop=not args.no_loop, seed=args.seed,
-                         autostart=args.autostart, db_path=db_path)
+                         autostart=args.autostart, db_path=db_path, engine=args.engine)
     log.info("저장: %s", db_path or "안 함 (--no-db)")
     if not args.autostart:
         log.info("앱이 POST /time/sync → POST /session/start를 보내면 측정을 시작함 (바로 보려면 --autostart)")

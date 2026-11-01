@@ -22,6 +22,7 @@
 | `mock_engine.py` | 가짜 판단: AI 엔진(`ai/engine/upper_body.py`)과 같은 모양의 결과(상태, 확신도, deltas, cues, 3초 필터) |
 | `schemas.py` | 앱에 주는 JSON 형식. **API 형식을 바꿀 때는 여기만 고친다** |
 | `mock_server.py` | FastAPI mock 서버 (세션·시각·센서 전원을 따라 시나리오 재생) |
+| `ai_engine.py` | **AI 판정 어댑터** `AiEngine`: 기준 자세·착석 구간·응답은 `MockEngine` 그대로, 판단만 `SitSenseEngine`으로. real 서버와 mock `--engine ai`가 같이 씀 |
 | `real_runtime.py` | **real 모드**: 실제 센서(`SensorHub`)를 읽어 같은 서버를 돌림 (`RealSource` 시각 변환, `GatedSensor` 전원 연결, `RealEngine` = AI 엔진 `ai/engine/sitsense_engine.py` 연결, 서버 시간 필터는 건너뜀) |
 | `../sensors/factory.py` | 실제 센서를 열어 `SensorHub`로 묶음 (`main.py --mode real`, 서버 real 모드 공용). 센서 클래스 약속이 적혀 있음 |
 | `clock.py` | 앱 기준 시각: '앱 시각 − Pi 단조시계' 차이만 저장, `boot_id` |
@@ -30,6 +31,7 @@
 | `seating.py` | 착석 구간 (자리 비움 5초, 정상/비정상/unknown) |
 | `../sensors/power.py` | 센서 전원 인터페이스 `Switchable` (실제 센서 클래스가 구현) + mock용 `SimulatedSwitch` |
 | `db/` | SQLite: `connection.py`(WAL 등 설정), `migrate.py`(스키마 버전), `migrations/`(001 테이블 13개, 002 다시 계산 표시), `store.py`(저장 경로 `Recorder`), `summary.py`(하루 요약 계산·다시 계산 명령어), `jobs.py`(자정 작업), `reports.py`(리포트 계산, 읽기 전용). 설계는 [`../docs/db_design.md`](../docs/db_design.md) |
+| `check_mock_ai.py` | mock 시나리오 10종을 AI 엔진에 넣어 기준 자세→판정→착석 구간→DB→API가 끝까지 도는지 확인 (AI 판정이 정답과 같은지는 참고로만 출력) |
 | `check_real.py` | real 모드 시험: mock 센서를 끼워 PC에서 실제 센서 경로(시각 변환·전원·자리 비움·기준 자세·DB)를 확인 |
 | `check_seating.py`, `check_session.py`, `check_db.py`, `check_summary.py`, `check_reports.py` | 확인 도구 (가상 시각으로 시나리오·API 흐름·DB 저장·자정 요약·리포트 시험) |
 | `openapi.yaml` | API 명세 (자동 생성 — 직접 고치지 않기). 안드로이드 Retrofit 코드 생성 등에 사용 |
@@ -214,7 +216,6 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 
 ## 나중에 바꿀 곳
 
-- **mock 서버에도 AI 엔진을 쓰려면:** `RealEngine`을 mock 시나리오에 쓰면 된다 (지금 mock은 기존 가짜 판단 유지)
 - **센서 클래스:** 압력 `../sensors/pressure.py`(`Mcp3208Pressure`), 거리 `../sensors/distance.py`(`Hcsr04Distance`)가 `../sensors/factory.py`의 약속대로 있다.
   Pi 전용 라이브러리(`spidev`, `gpiozero`)는 `__init__` 안에서 import. 시험은 `python -m hardware.sensors.check_pressure`, `check_distance` (가짜 SPI·GPIO)
 
@@ -235,3 +236,17 @@ python -m hardware.server.check_real
 - 카메라: `--camera picam`(Pi) / `webcam`(시험용), 거꾸로 달았으면 `--rotate180`. 기본 `none`이면 목·기울기는 `unknown`.
 - 카메라가 없으면(`pose=None`) 기준 자세를 사람 인식 없이 잰다.
 - 센서 시각은 읽은 직후 앱 기준 시각으로 바꾼다 (`RealSource.read`).
+
+## mock에서 AI 엔진 쓰기 (`--engine`)
+
+mock의 목적은 '데이터가 들어오면 AI와 앱이 잘 도는지' 확인하는 것이라, mock 서버도 기본으로 AI 엔진을 쓴다.
+
+```bash
+python -m hardware.server.mock_server                    # --engine ai (기본): mock 센서 값 → AI 엔진 → 서버 → 앱
+python -m hardware.server.mock_server --engine fake      # 시나리오 정답을 그대로 (앱 화면을 예측 가능하게 볼 때)
+python -m hardware.server.check_mock_ai                  # 파이프라인 확인 (AI 판정이 정답과 다를 수 있음)
+```
+
+- `ai`: 기준 자세 측정(10초) 뒤 AI 판정이 나오고, 자세를 바꾸면 약 5초 뒤 반영된다. mock 압력은 실제 수집값을 흉내 낸 것이라
+  시나리오 라벨과 AI 판정이 가끔 다를 수 있다 (`lean_right` 등) — 이 차이가 모델 점검 자료가 된다.
+- `fake`: 3초 필터와 시나리오 정답. 시험 도구(`check_session` 등)는 이쪽으로 돌린다 (`create_app` 기본값 `engine="fake"`).
