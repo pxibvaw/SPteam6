@@ -99,8 +99,9 @@ def main() -> int:
 
     try:
         _load(DISTANCE, cfg)
+        ok("거리센서 클래스 불러오기 (PC에서는 gpiozero 안내)", False, "열림")
     except SensorError as e:
-        ok("거리센서 코드 없으면 안내 메시지", "distance.py" in str(e), str(e)[:30])
+        ok("거리센서 클래스 불러오기 (PC에서는 gpiozero 안내)", "gpiozero" in str(e), str(e)[:30])
 
     bad = [r for r in rows if not r[0]]
     print(f"\n{len(rows) - len(bad)}/{len(rows)} 통과")
