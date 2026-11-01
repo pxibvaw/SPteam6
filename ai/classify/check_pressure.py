@@ -11,7 +11,7 @@
               빈 값·범위 밖 입력 거부 + 거부 뒤에도 기준값이 멀쩡함 (버그 1)
               규칙으로 저장된 모델 파일 동작 (버그 2)
               빈 의자: 순간 값(empty)이 바로 나오고 hold_sec 뒤 상태가 empty (버그 3)
-              화면 거리: 40/50cm 경계 · 3초 유지 · 거리 실패 시 직전 값
+              화면 거리: 40/50cm 경계 · 4초 유지 · 거리 실패 시 직전 값
               후처리: hold_sec 유지 · 확신도 잠깐 낮아도 유지 시간 이어짐 · 움직이는 중 판정 멈춤
     재생      재생 기록의 빈 의자 표시 == 실시간 판정기 (버그 3)
     학습 결정  auto는 0.5%p 이상일 때만 켬, on/off는 지정대로 (버그 4)
@@ -213,20 +213,20 @@ def main() -> int:
         assert 4.0 <= first_empty <= 5.0, f"empty가 {first_empty}초 뒤 (기대 약 4초)"
         return f"상태가 empty로 바뀐 시점 {first_empty:g}초"
 
-    @check("실시간: 화면 거리 40/50cm 구간 + 3초 유지 + 거리 없으면 유지")
+    @check("실시간: 화면 거리 40/50cm 구간 + 4초 유지 + 거리 없으면 유지")
     def _():
         s = SeatClassifier(small)
         s.calibrate([[3500] * len(ch)] * 20)
         z = s.dist_filter.zone
         assert (z(39.9), z(40.0), z(49.9), z(50.0)) == ("warning", "caution", "caution", "ok"), "구간 경계가 틀림"
         t, states = 0.0, []
-        for d in [60] * 10 + [35] * 12:               # 5초 적정 → 6초 가까이
+        for d in [60] * 10 + [35] * 14:               # 5초 적정 → 6초 가까이
             states.append(s.update(t, [3500] * len(ch), d).distance_state)
             t += 0.5
         assert states[0] == "unknown" and states[9] == "ok", f"처음 상태 {states[:10]}"
         first_warn = states.index("warning")
-        # 중앙값(4개)이 35로 넘어가는 데 약 1초 + 3초 유지
-        assert 10 + 6 <= first_warn <= 10 + 9, f"warning이 {(first_warn - 10) * 0.5}초 뒤 (기대 약 4초)"
+        # 중앙값(4개)이 35로 넘어가는 데 약 1초 + 4초 유지
+        assert 10 + 8 <= first_warn <= 10 + 11, f"warning이 {(first_warn - 10) * 0.5}초 뒤 (기대 약 5초)"
         for _ in range(2):                            # 잠깐 거리 실패(None) → 직전 값으로 상태 유지
             assert s.update(t, [3500] * len(ch), None).distance_state == "warning"
             t += 0.5

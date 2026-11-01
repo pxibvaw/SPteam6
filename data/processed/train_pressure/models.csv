@@ -1,0 +1,5 @@
+﻿model,condition,acc_p1,acc_p2,acc_p3,acc_mean,macro_f1
+rule,규칙(threshold),0.879,0.644,0.969,0.831,0.782
+rf,Random Forest,0.605,0.77,1.0,0.792,0.774
+svm,SVM,0.582,0.514,1.0,0.698,0.708
+knn,KNN,0.569,0.464,0.969,0.668,0.672
