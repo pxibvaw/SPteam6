@@ -1,16 +1,16 @@
 """착석 구간 — 언제부터 언제까지 앉아 있었나, 그동안 자세는 어땠나
 
 규칙
-    - 자리 비움 판단은 3초 필터와 별개로, 그 순간의 압력으로 한다 (압력 합 < EMPTY_TOTAL_ADC).
+    - 자리 비움 판단은 유지 시간 필터(short_filter_sec)와 별개로, 그 순간의 압력으로 한다 (압력 합 < EMPTY_TOTAL_ADC).
       AI 코드와 같은 기준. 합이라서 채널 수가 줄면 채널당 기준은 조금 높아진다 (8채널 6.25, 6채널 8.3)
     - 자리 비움이 EMPTY_END_SEC(5초) 이어지면 구간 종료. 종료 시각 = 판단 시각 − 5초 (마지막 5초는 착석에 안 넣음)
     - 5초 미만 자리 비움은 구간을 유지하고, 그 시간은 unknown으로 센다.
     - 구간이 없을 때 압력이 SIT_CONFIRM_SEC(1초) 이어지면 새 구간. 시작 시각 = 압력이 처음 들어온 시각
-    - 순간마다 normal / abnormal / unknown (3초 필터를 거친 상태 기준)
+    - 순간마다 normal / abnormal / unknown (short_filter_sec 필터를 거친 상태 기준)
         normal   목 normal + 기울기 none + 좌면 normal (체중 편향이면 정상 아님)
         abnormal 나쁜 자세가 하나라도 확정됨 (다른 부분이 unknown이어도)
         unknown  나쁜 자세는 없지만 판단 못 한 부분이 있음 (카메라 미인식·켜는 중, 기준 측정 전, 짧은 자리 비움)
-    - 구간별 '첫 비정상 확정까지 걸린 초' = 구간 시작 → 처음 abnormal이 된 순간 (3초 필터 확정 시각)
+    - 구간별 '첫 비정상 확정까지 걸린 초' = 구간 시작 → 처음 abnormal이 된 순간 (short_filter_sec 필터 확정 시각)
 
 센서·AI 종류와 상관없이 쓸 수 있게 FastAPI·mock 코드에 의존하지 않는다.
 끝난 구간은 지금은 메모리에만 둔다 (DB 저장은 다음 단계).
@@ -140,7 +140,7 @@ class SeatingTracker:
                 self._sit_since = ts
             if ts - self._sit_since < self.confirm_sec:
                 return
-            # 새 구간: 시작은 압력이 처음 들어온 시각. 확인하는 동안은 3초 필터가 아직 좌면을
+            # 새 구간: 시작은 압력이 처음 들어온 시각. 확인하는 동안은 유지 시간 필터가 아직 좌면을
             # empty로 들고 있어서 판단할 수 없으므로 unknown으로 센다
             self.current = Segment(start=self._sit_since)
             self.current.add(PostureStatus.UNKNOWN, ts - self._sit_since)

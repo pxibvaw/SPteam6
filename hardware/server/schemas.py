@@ -57,7 +57,7 @@ class StateKind(str, Enum):
 
 
 class Pending(BaseModel):
-    """새 자세가 나타났지만 아직 short_filter_sec(3초)가 안 지나 확정되지 않은 것"""
+    """새 자세가 나타났지만 아직 short_filter_sec(config.yaml, 현재 4초)가 안 지나 확정되지 않은 것"""
     kind: StateKind = Field(..., description="어떤 판단인지 (seat / head / tilt)")
     state: str = Field(..., description="바뀔 상태 값 (예: forward)")
     remaining_sec: float = Field(..., ge=0, description="확정까지 남은 초")
@@ -69,7 +69,7 @@ class Point(BaseModel):
 
 
 class Current(BaseModel):
-    """지금 자세 — 홈 화면용, 1~3초마다 호출"""
+    """지금 자세 — 홈 화면용, 1초마다 호출"""
     ts: float = Field(..., description="측정 시각 (time.time() 초)")
     seated: bool = Field(..., description="앉아 있는지 (seat_state != empty)")
     sitting_since: float | None = Field(None, description="이번 연속 착석 시작 시각. 자리 비움이면 null")
@@ -165,14 +165,14 @@ class SeatingSegment(BaseModel):
     end_reason: EndReason | None = Field(None, description="away 자리 비움 5초 / stop 정지 버튼. 진행 중이면 null")
     duration_sec: float | None = Field(None, description="구간 길이 (진행 중이면 지금까지)")
     first_abnormal_sec: float | None = Field(
-        None, description="구간 시작 → 첫 비정상 자세 확정(3초 유지)까지 초. 아직 없으면 null")
+        None, description="구간 시작 → 첫 비정상 자세 확정(short_filter_sec, 현재 4초 유지)까지 초. 아직 없으면 null")
     normal_sec: float = Field(..., description="정상 시간 (목 normal + 기울기 none + 좌면 normal)")
     abnormal_sec: float = Field(..., description="비정상 시간 (나쁜 자세가 하나라도 확정)")
     unknown_sec: float = Field(..., description="판단 못 한 시간 (카메라 미인식·켜는 중, 기준 측정 전, 5초 미만 자리 비움)")
 
 
 class Seating(BaseModel):
-    """지금 착석 구간 — /current의 seated(3초 필터)와 달리 '자리 비움 5초' 규칙을 따른다"""
+    """지금 착석 구간 — /current의 seated(유지 시간 필터)와 달리 '자리 비움 5초' 규칙을 따른다"""
     ts: float
     seated: bool = Field(..., description="착석 구간 안인지 (5초 미만 자리 비움이면 아직 true)")
     segment: SeatingSegment | None = Field(None, description="진행 중인 구간. 구간 밖이면 null")

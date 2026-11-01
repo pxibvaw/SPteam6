@@ -5,7 +5,7 @@ AI 엔진(ai 브랜치 ai/engine/upper_body.py)과 같은 모양의 결과를 �
     - 착석 구간: seating.SeatingTracker (자리 비움 5초 → 구간 종료, 구간별 정상/비정상/unknown 시간)
     - 목·기울기: 라벨에 맞는 변화량(deltas)을 흉내 내고, 판단 규칙은 upper_body.judge()와 같게
       (threshold는 config.yaml의 upper_rules, 없으면 AI 코드의 기본값)
-    - 시간 필터: 새 상태가 short_filter_sec(3초) 이상 이어져야 확정 (upper_body.StateFilter와 같은 방식)
+    - 시간 필터: 새 상태가 short_filter_sec(config.yaml, 현재 4초) 이상 이어져야 확정 (upper_body.StateFilter와 같은 방식)
 
 AI 엔진이 합쳐지면 judge_upper()/judge_seat() 대신 진짜 결과를 넣으면 된다.
 AI 코드는 import하지 않는다 (hardware 브랜치에 아직 없음, 수정하지 않기로 함).
@@ -198,7 +198,7 @@ class MockEngine:
         return classify_distance(dist_mm, self.ok_mm, self.warn_mm)
 
     def pending_list(self, ts: float) -> list[dict]:
-        """바뀌기를 기다리는 상태 (3초 필터)"""
+        """바뀌기를 기다리는 상태 (short_filter_sec 필터)"""
         out = []
         for kind, f in self.filters.items():
             p = f.pending(ts)

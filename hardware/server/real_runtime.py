@@ -7,7 +7,7 @@ mock 서버(mock_server.py)와 같은 API·세션·기준 자세·착석 구간�
     RealRuntime  ← RealSource(SensorHub)    + AiEngine(AI 엔진 ai/engine/sitsense_engine.py)
 
 판단(좌면·목·기울기·화면 거리)은 AI 엔진이 한다. 엔진 결과는 이미 4초 유지를 거친 확정 상태라서
-서버의 3초 필터는 건너뛴다 (PassThroughFilter). 카메라가 없으면 목·기울기는 unknown.
+서버의 유지 시간 필터는 건너뛴다 (PassThroughFilter). 카메라가 없으면 목·기울기는 unknown.
 
 센서 전원 정책(power.py)은 센서를 GatedSensor로 감싸서 적용한다:
   꺼진 거리센서는 읽지 않고 '실패'로, 꺼진 카메라는 None으로 채운다 (SensorHub 규칙 그대로).

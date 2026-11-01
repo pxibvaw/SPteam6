@@ -470,7 +470,7 @@ def create_app(cfg: dict, scenario: str = "demo", loop: bool = True, seed: int |
                 "scenario_total_sec": runtime.scenario.total_sec if runtime.scenario else None,
             }
 
-    @app.get("/current", response_model=Current, tags=["자세"], summary="지금 자세 (1~3초마다 호출)",
+    @app.get("/current", response_model=Current, tags=["자세"], summary="지금 자세 (1초마다 호출)",
              responses={404: {"description": "아직 기록 없음"}})
     def current():
         with runtime.lock:
