@@ -1,7 +1,8 @@
 """상체 판단 — 기준 자세 대비 변화로 거북목·좌우 기울기 판단 (규칙 방식 초안)
 
 흐름
-    0. FeatureSmoother: 최근 몇 프레임 특징의 중앙값 (점 떨림 완화, 특히 눈 선 각도)
+    0. FeatureSmoother: 최근 smooth_sec초 특징의 중앙값 (점 떨림 완화, 특히 눈 선 각도)
+       프레임 수가 아니라 초 단위 → 카메라 속도(Pi 2~5fps, 엔진 0.5초마다)와 상관없이 같은 시간. 압력 2초 평균과 같음
     1. Baseline: 처음 baseline_seconds 동안 바른 자세의 특징을 모아 중앙값을 기준으로 저장
     2. judge(): 지금 특징 − 기준 특징이 threshold를 넘으면 나쁜 자세
     3. StateFilter: 같은 상태가 short_filter_sec 이상 유지돼야 상태를 바꿈 (깜빡임 방지)
@@ -32,7 +33,7 @@ class UpperRules:
     shoulder_angle_deg: float = 5.0    # 어깨 선이 기준보다 5도 이상 기울면
     head_angle_deg: float = 7.0        # 눈 선이 기준보다 7도 이상 기울면
     head_offset: float = 0.10          # 코가 기준보다 어깨 너비의 10% 이상 옆으로 가면
-    smooth_frames: float = 5           # 특징을 최근 몇 프레임의 중앙값으로 부드럽게 할지
+    smooth_sec: float = 2.0            # 특징을 최근 몇 초의 중앙값으로 부드럽게 할지 (압력 2초 평균과 같게)
 
     @classmethod
     def from_config(cls, cfg: dict) -> "UpperRules":
@@ -55,18 +56,23 @@ class UpperRules:
 # 특징 떨림 완화
 # ---------------------------------------------------------------------------
 class FeatureSmoother:
-    """최근 n프레임 특징의 중앙값. 사람이 사라지면(None) 쌓인 값을 비운다."""
+    """최근 window_sec초 특징의 중앙값 (ts = 프레임 촬영 시각, 초). 사람이 사라지면(None) 쌓인 값을 비운다."""
 
-    def __init__(self, n: int = 5):
-        self.buf: deque[UpperFeatures] = deque(maxlen=max(1, int(n)))
+    def __init__(self, window_sec: float = 2.0):
+        if window_sec <= 0:
+            raise ValueError("window_sec는 0보다 커야 함")
+        self.window = float(window_sec)
+        self.buf: deque[tuple[float, UpperFeatures]] = deque()
 
-    def update(self, feat: UpperFeatures | None) -> UpperFeatures | None:
+    def update(self, feat: UpperFeatures | None, ts: float) -> UpperFeatures | None:
         if feat is None:
             self.buf.clear()
             return None
-        self.buf.append(feat)
+        self.buf.append((ts, feat))
+        while self.buf and self.buf[0][0] <= ts - self.window:   # window_sec보다 오래된 값 버림 (지금 값은 항상 남음)
+            self.buf.popleft()
         keys = [f.name for f in fields(UpperFeatures)]
-        return UpperFeatures(**{k: float(np.median([getattr(s, k) for s in self.buf]))
+        return UpperFeatures(**{k: float(np.median([getattr(s, k) for _, s in self.buf]))
                                 for k in keys})
 
     def reset(self) -> None:

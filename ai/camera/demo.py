@@ -125,7 +125,7 @@ def run(args) -> None:
             PoseExtractor(args.model if args.model is not None else cam_cfg.get("model_complexity", 1)) as ext:
         w, h = cam.width, cam.height
         base = Baseline(seconds=base_sec)
-        smoother = FeatureSmoother(rules.smooth_frames)
+        smoother = FeatureSmoother(rules.smooth_sec)
         head_f, tilt_f = StateFilter(hold), StateFilter(hold)
         t_start, t_last_print, fps, misses = time.time(), 0.0, 0.0, 0
         log.info("카메라 %dx%d. 처음 %g초는 바른 자세로 앉아 주세요", w, h, base_sec)
@@ -144,7 +144,7 @@ def run(args) -> None:
             misses = 0
 
             pose = ext.extract(frame)
-            feat = smoother.update(upper_features(pose, w, h, rules.min_visibility))
+            feat = smoother.update(upper_features(pose, w, h, rules.min_visibility), frame.ts)
             j = head_state = tilt_state = pending = None
             if not base.ready:
                 if base.add(feat, frame.ts):

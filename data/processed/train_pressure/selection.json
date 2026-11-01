@@ -1,0 +1,76 @@
+{
+  "created": "2026-11-01T19:19:49",
+  "people": [
+    "p1",
+    "p2",
+    "p3"
+  ],
+  "n_rows": 14040,
+  "channels": [
+    "R_back",
+    "R_front",
+    "R_mid",
+    "L_front",
+    "L_mid",
+    "L_back"
+  ],
+  "ref_mode": "raise",
+  "use_extras": false,
+  "augment": true,
+  "movement": {
+    "jump": 800.0,
+    "window": 4,
+    "before": 2,
+    "zero_level": 10.0
+  },
+  "window": 4,
+  "reasons": [
+    "기준 방식: 올림 (데이터: 올림이 +0.7%p)",
+    "흔들림·거리: 끔 (데이터: +0.3%p, 0.5%p 이상일 때 켬)",
+    "좌우 대칭 증강: 켬 (데이터: +12.0%p, 0.5%p 이상일 때 켬)"
+  ],
+  "models": {
+    "rule": {
+      "acc": 0.8305,
+      "macro_f1": 0.782,
+      "per_person": {
+        "p1": 0.8789,
+        "p2": 0.6442,
+        "p3": 0.9685
+      }
+    },
+    "rf": {
+      "acc": 0.7917,
+      "macro_f1": 0.7737,
+      "per_person": {
+        "p1": 0.6047,
+        "p2": 0.7704,
+        "p3": 1.0
+      }
+    },
+    "svm": {
+      "acc": 0.6984,
+      "macro_f1": 0.7079,
+      "per_person": {
+        "p1": 0.5816,
+        "p2": 0.5137,
+        "p3": 1.0
+      }
+    },
+    "knn": {
+      "acc": 0.6677,
+      "macro_f1": 0.6724,
+      "per_person": {
+        "p1": 0.5693,
+        "p2": 0.4644,
+        "p3": 0.9694
+      }
+    }
+  },
+  "ranking_by_acc": [
+    "rule",
+    "rf",
+    "svm",
+    "knn"
+  ]
+}

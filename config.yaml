@@ -47,14 +47,14 @@ upper_rules:          # [AI] 카메라 상체 판단 기준 — ⚠️ 전부 �
   shoulder_angle_deg: 5.0   # 어깨 선이 기준보다 5도 이상 기울면 기울기 단서
   head_angle_deg: 7.0       # 눈 선이 기준보다 7도 이상 기울면 기울기 단서
   head_offset: 0.10         # 코가 기준보다 어깨 너비의 10% 이상 옆으로 가면 기울기 단서
-  smooth_frames: 5          # 특징을 최근 5프레임 중앙값으로 부드럽게 (점 떨림 완화)
+  smooth_sec: 2.0           # 특징을 최근 2초 중앙값으로 부드럽게 (점 떨림 완화, 압력 2초 평균과 같게)
 
 thresholds:
   baseline_seconds: 10      # 세션 시작 후 바른 자세 기준 측정 시간
   distance_ok_mm: 500       # 50cm 이상 적정 — OSHA(50~100cm)·AOA(50~70cm) 권장 하한
   distance_warning_mm: 400  # 40cm 미만 경고 — 고용노동부 VDT 작업관리지침(40cm 이상)
   close_delta_mm: 100       # ⚠️ 임시값, 근거 없음: 기준 거리보다 이만큼 가까워지면 거북목 단서로 사용
-  short_filter_sec: 3       # ⚠️ 임시값: 3초 이상 유지돼야 자세로 인정
+  short_filter_sec: 4       # 4초 이상 유지돼야 자세로 인정 — 압력 재생 테스트로 고른 값 + ISO 11226(4초 넘게 유지 = 정적 자세). 카메라·거리·서버 공통
   long_filter_sec: 30       # ⚠️ 임시값: 30초 이상 유지되면 습관으로 기록
 
 paths:

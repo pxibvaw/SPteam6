@@ -28,7 +28,8 @@
        ok      50cm 이상   OSHA(50~100cm)·AOA(50~70cm) 권장 하한
        caution 40~50cm     고용노동부 VDT 작업관리지침(40cm 이상)은 지키지만 국제 권장보다 가까움
        warning 40cm 미만   VDT 지침 미달
-       같은 구간이 dist_hold_sec(3초) 이어져야 상태를 바꿈 → 잠깐 숙이는 정도로는 경고가 안 뜸.
+       같은 구간이 dist_hold_sec(4초, 엔진은 config.yaml short_filter_sec) 이어져야 상태를 바꿈
+       → 잠깐 숙이는 정도로는 경고가 안 뜸.
        거리는 cm라는 물리량이고 공인 기준이 있어서 학습하지 않는다 (압력은 사람마다 달라서 학습).
        주의: 지침은 눈~화면 거리 → 센서는 얼굴 높이를 향하게 달아야 기준과 맞음
 
@@ -38,7 +39,7 @@ train_pressure --final로 모델 파일에 저장한다. 모델 파일에 없으
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 import pandas as pd
@@ -64,7 +65,7 @@ class SeatParams:
     empty_level: float = -0.8        # 모든 채널 편차가 이보다 낮으면 자리 비움
     dist_warn_cm: float = 40.0       # 이보다 가까우면 warning (고용노동부 VDT 작업관리지침 40cm 이상)
     dist_caution_cm: float = 50.0    # 이보다 가까우면 caution (OSHA·AOA 권장 하한 50cm)
-    dist_hold_sec: float = 3.0       # 같은 거리 구간이 이만큼 이어져야 상태를 바꿈
+    dist_hold_sec: float = 4.0       # 같은 거리 구간이 이만큼 이어져야 상태를 바꿈 (좌면 hold_sec과 같게)
     distance_valid_cm: tuple = (15.0, 150.0)   # 이 범위 밖 거리는 측정 실패로 보고 직전 값 사용
 
 
@@ -148,8 +149,11 @@ class DistanceFilter:
 
 
 class SeatClassifier:
-    def __init__(self, model=MODEL_PATH, params: SeatParams | None = None, method: str = "model"):
-        """model: 모델 파일 경로 또는 이미 불러온 bundle(dict). method: model(학습 모델) / rule(규칙 방식)"""
+    def __init__(self, model=MODEL_PATH, params: SeatParams | None = None, method: str = "model",
+                 overrides: dict | None = None):
+        """model: 모델 파일 경로 또는 이미 불러온 bundle(dict). method: model(학습 모델) / rule(규칙 방식)
+        overrides: 모델 파일의 후처리 기준값은 그대로 두고 일부만 바꿀 때 (예: config.yaml의 거리 기준
+        {"dist_warn_cm": 40, "dist_caution_cm": 50})"""
         if isinstance(model, dict):
             self.bundle = model
         else:
@@ -167,6 +171,8 @@ class SeatClassifier:
         self.model = b["model"]
         if hasattr(self.model, "n_jobs"):
             self.model.n_jobs = 1                       # 한 줄씩 예측할 때는 병렬이 오히려 느림
+        from sklearn.ensemble import RandomForestClassifier
+        self._trees = list(self.model.estimators_) if isinstance(self.model, RandomForestClassifier) else None
         self.channels: list[str] = list(b["channels"])
         self.labels: list[str] = list(b["labels"]) if method == "model" else list(RULE_LABELS)
         self._rule = None
@@ -183,6 +189,11 @@ class SeatClassifier:
         self.default_dist = float(b.get("default_distance_cm", 60.0))
         self.mv = MovementParams(**b.get("movement", {}))
         self.params = params or (SeatParams(**b["post"]) if b.get("post") else SeatParams())
+        if overrides:
+            self.params = replace(self.params, **overrides)    # 모르는 이름이면 TypeError
+        if self.params.dist_warn_cm >= self.params.dist_caution_cm:
+            raise ValueError(f"dist_warn_cm({self.params.dist_warn_cm})는 dist_caution_cm"
+                             f"({self.params.dist_caution_cm})보다 작아야 함")
         self.post = PostProcessor(self.params, self.labels)
         self.dist_filter = DistanceFilter(self.params)
         self.base: pd.Series | None = None
@@ -268,7 +279,13 @@ class SeatClassifier:
         if self.method == "rule":
             pred = self._rule.predict(F)[0]
             return np.array([1.0 if l == pred else 0.0 for l in self.labels])
-        proba = self.model.predict_proba(F)[0]
+        if self._trees is not None:
+            # RF 한 줄 예측 빠른 길: sklearn은 나무 300개를 하나씩 작업으로 나눠 부르느라 한 줄에 수십 ms가 든다.
+            # 나무별 확률의 평균 = RandomForestClassifier.predict_proba와 같은 계산 (Pi에서 0.5초 안에 끝나게)
+            X = np.asarray(F, dtype=np.float32)
+            proba = np.mean([t.predict_proba(X, check_input=False) for t in self._trees], axis=0)[0]
+        else:
+            proba = self.model.predict_proba(F)[0]
         order = [list(self.model.classes_).index(l) for l in self.labels]
         return proba[order]
 
