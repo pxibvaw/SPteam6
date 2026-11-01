@@ -250,3 +250,28 @@ python -m hardware.server.check_mock_ai                  # 파이프라인 확�
 - `ai`: 기준 자세 측정(10초) 뒤 AI 판정이 나오고, 자세를 바꾸면 약 5초 뒤 반영된다. mock 압력은 실제 수집값을 흉내 낸 것이라
   시나리오 라벨과 AI 판정이 가끔 다를 수 있다 (`lean_right` 등) — 이 차이가 모델 점검 자료가 된다.
 - `fake`: 3초 필터와 시나리오 정답. 시험 도구(`check_session` 등)는 이쪽으로 돌린다 (`create_app` 기본값 `engine="fake"`).
+
+## 앱 화면 문구 — 기준 자세 (확정)
+
+서버는 문구를 주지 않고 상태만 준다 (표시용 글자는 앱이 만든다). 앱은 아래 표대로 보여 준다.
+상태는 `GET /baseline`의 `state` / `waiting_seat` / `remaining_sec`, 세션 중에는 `GET /session`의 `baseline`.
+
+| 상태 | 의미 | 문구 |
+|---|---|---|
+| `none` | 아직 기준 없음 | 처음 한 번, 바른 자세를 측정해요 |
+| `measuring` + `waiting_seat=true` | 앉기를 기다리는 중 | 방석에 깊숙이 바르게 앉아 주세요 |
+| `measuring` | 10초 측정 중 (`remaining_sec`) | 바른 자세로 편하게 앉아주세요 (n초) |
+| `ready` | 완료 | 기준 자세를 저장했어요 |
+| `failed` | 실패 | 아래 `fail_reason`별 문구 |
+
+| `fail_reason` | 문구 |
+|---|---|
+| `no_person` | 카메라에 상체가 보이지 않아요. 정면에 앉아 주세요 |
+| `sensor_lost` | 거리 센서가 값을 읽지 못했어요. 화면 앞에 앉아 있는지 확인해 주세요 |
+| `too_much_motion` | 움직임이 커서 측정하지 못했어요. 가만히 앉아 다시 시도해 주세요 |
+| `pressure_low` | 방석에 깊숙이 바르게 앉아 다시 측정해 주세요 |
+
+- `failed`이고 `using_previous=true`이면 "이전 기준을 계속 사용해요"를 덧붙인다.
+- 성공한 기준이 없는 채로 실패하면 세션이 멈추고 `end_reason`이 `baseline_failed`로 온다.
+- 연결 단계("기기와 센서를 연결하고 있어요")는 `GET /status`의 센서 `ok` 값으로 정한다.
+- 실시간 자세(`GET /current`)는 **1초 주기**로 호출한다.
