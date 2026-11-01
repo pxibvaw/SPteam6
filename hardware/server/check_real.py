@@ -29,8 +29,35 @@ from hardware.server.real_runtime import RealRuntime
 DT = 0.5                                    # config.yaml sampling.hz = 2
 
 
-def build(cfg: dict, ft: FakeTime, *, camera: bool = True, db: str | None = None):
+class ScaledPressure:
+    """common의 mock 압력(약 400~600)을 실제 MCP3208 크기(약 3000대)로 키움 — AI 엔진은 최대치의 25% 이상 눌려야 기준 측정 성공"""
+    SCALE = 7
+
+    def __init__(self, inner, scale: int = SCALE):
+        object.__setattr__(self, "scale", scale)
+        object.__setattr__(self, "inner", inner)
+
+    def __getattr__(self, name):
+        return getattr(self.inner, name)
+
+    def __setattr__(self, name, value):
+        if name in ("inner", "scale"):
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self.inner, name, value)
+
+    def read(self):
+        r = self.inner.read()
+        r.values = [min(4095, v * self.scale) for v in r.values]
+        return r
+
+    def close(self):
+        self.inner.close()
+
+
+def build(cfg: dict, ft: FakeTime, *, camera: bool = True, db: str | None = None, scale: int = ScaledPressure.SCALE):
     hub = MockSensorHub(cfg, seed=1)
+    hub.pressure = ScaledPressure(hub.pressure, scale)
     if not camera:
         hub.pose = None
     clock = AppClock(monotonic=ft.mono, wall=ft.wall)
@@ -58,7 +85,7 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         c, rt = build(cfg, ft, db=str(Path(tmp) / "real.db"))
-        inner_p = rt.gates["pressure"].inner
+        inner_p = rt.gates["pressure"].inner.inner       # 가짜 센서 (ScaledPressure 안쪽)
         st = c.get("/status").json()
         ok("mode가 real", st["mode"] == "real", st["mode"])
         ok("시나리오 정보 없음", st["scenario"] is None and st["scenario_total_sec"] is None, st["scenario"])
@@ -78,7 +105,7 @@ def main() -> int:
         ok("앉음 감지", s["seated_now"] is True, s["seated_now"])
         ok("기록 시각이 앱 기준 (Pi 시계 아님)", abs(cur["ts"] - (APP_START + 3 + 0.0)) < 5, round(cur["ts"] - APP_START, 1))
         ok("압력 6채널 실제값 전달", len(cur["pressure"]) == cfg["pressure"]["n_channels"], cur["pressure"])
-        ok("판단은 unknown (AI 연결 전)", cur["seat_state"] == "unknown" and cur["head_state"] == "unknown",
+        ok("기준 자세 전에는 unknown", cur["seat_state"] == "unknown" and cur["head_state"] == "unknown",
            (cur["seat_state"], cur["head_state"]))
         ok("거리·카메라 켜짐 (착석 구간 안)", s["sensors"]["distance"] in ("on", "warming"), s["sensors"])
 
@@ -87,6 +114,13 @@ def main() -> int:
         ok("기준 자세 측정 완료", b["state"] == "ready" and b["distance_mm"] is not None, b["state"])
         cur = c.get("/current").json()
         ok("거리 값 실제 전달", cur["distance_mm"] is not None, cur["distance_mm"])
+        run(rt, ft, 8)                          # AI 엔진의 4초 유지가 지나야 확정
+        cur = c.get("/current").json()
+        ok("AI 판단: 좌면 normal", cur["seat_state"] == "normal", cur["seat_state"])
+        ok("AI 판단: 목 normal, 기울기 none", (cur["head_state"], cur["tilt_state"]) == ("normal", "none"),
+           (cur["head_state"], cur["tilt_state"]))
+        ok("화면 거리 단계 ok (600mm)", cur["distance_level"] == "ok", cur["distance_level"])
+        ok("엔진 신뢰도 전달", cur["confidence"]["seat"] > 0, cur["confidence"])
         ok("압력 중심 계산", cur["center_of_pressure"] is not None, cur["center_of_pressure"])
 
         # 자리 비움
@@ -140,13 +174,30 @@ def main() -> int:
     c, rt = build(cfg, ft2, camera=False)
     c.post("/time/sync", json={"app_time": APP_START, "timezone": "Asia/Seoul"})
     c.post("/session/start")
-    run(rt, ft2, 20)
+    run(rt, ft2, 28)
     b = c.get("/baseline").json()
     st = c.get("/status").json()
+    cur = c.get("/current").json()
     ok("카메라 없이 기준 자세 완료", b["state"] == "ready" and b["pose"] is None, b["state"])
+    ok("카메라 없으면 목·기울기 unknown, 좌면은 판정", (cur["head_state"], cur["tilt_state"]) == ("unknown", "unknown")
+       and cur["seat_state"] == "normal", (cur["seat_state"], cur["head_state"], cur["tilt_state"]))
     ok("카메라 없음 표시", st["sensors"]["camera"]["ok"] is False and "연결 안 됨" in st["sensors"]["camera"]["detail"],
        st["sensors"]["camera"])
     ok("세션이 멈추지 않음", c.get("/session").json()["state"] == "running", "running")
+
+    # 압력이 약하면(덜 앉음) 기준 측정이 pressure_low로 실패하고, 성공한 기준이 없으면 세션이 멈춘다
+    ft3 = FakeTime()
+    for mod in (sensors_base, mock_sensors, real_runtime):
+        mod.now = ft3.wall
+    c, rt = build(cfg, ft3, scale=1)
+    c.post("/time/sync", json={"app_time": APP_START, "timezone": "Asia/Seoul"})
+    c.post("/session/start")
+    run(rt, ft3, 16)
+    s = c.get("/session").json()
+    ok("덜 눌리면 기준 측정 실패 pressure_low", s["baseline"]["state"] == "failed"
+       and s["baseline"]["fail_reason"] == "pressure_low", (s["baseline"]["state"], s["baseline"]["fail_reason"]))
+    ok("성공한 기준이 없으면 세션 정지", s["state"] == "idle" and s["end_reason"] is None or s["state"] == "idle",
+       (s["state"], s["end_reason"]))
 
     bad = [r for r in ok.rows if not r[0]]
     print(f"\n{len(ok.rows) - len(bad)}/{len(ok.rows)} 통과")

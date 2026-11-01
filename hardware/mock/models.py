@@ -22,6 +22,10 @@ from common.sensors_base import (
 DISTANCE_SENSORS = {
     "hc-sr04": {"noise_mm": 12.0, "fail_prob": 0.02, "spike_prob": 0.005},   # 초음파 반사로 가끔 튐
 }
+# 압력 크기: 예전 10비트(0~1023) 기준 모양을 12비트 실제 크기로 키움.
+# 실제 수집값은 바르게 앉으면 채널당 약 3200~3800 (AI 엔진은 최대치의 25% 이상 눌려야 기준 측정 성공)
+PRESSURE_SCALE = 6.0
+
 BASE_DISTANCE_MM = 600          # 바른 자세일 때 화면 거리 (mock_sensors 기본값과 같음)
 FORWARD_OFFSET_MM = -80         # 거북목이면 화면에 가까워짐 (mock_sensors와 같음)
 EMPTY_DISTANCE_MM = 1100        # 자리 비움이면 의자 뒤 벽까지 거리
@@ -52,7 +56,7 @@ class PressureModel:
     """
 
     def __init__(self, positions: np.ndarray, adc_max: int, rng: np.random.Generator,
-                 noise: float = 12.0, drift: float = 25.0):
+                 noise: float = 12.0 * PRESSURE_SCALE, drift: float = 25.0 * PRESSURE_SCALE):
         self.pos = np.asarray(positions, dtype=float)
         self.adc_max = adc_max
         self.rng = rng
@@ -62,7 +66,7 @@ class PressureModel:
     def base(self, seat: str, extra_lean: str | None = None) -> np.ndarray:
         x, y = self.pos[:, 0], self.pos[:, 1]
         left, front = x < 0, y > 0
-        v = 450.0 - 130.0 * y                          # 겹친 자세에서도 1023에 붙지 않게
+        v = (450.0 - 130.0 * y) * PRESSURE_SCALE       # 겹친 자세에서도 4095에 붙지 않게
         if seat.startswith("cross_"):
             side = left if seat == SeatState.CROSS_LEFT.value else ~left
             v = np.where(side & ~front, v * 1.4, v)

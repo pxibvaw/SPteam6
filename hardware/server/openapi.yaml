@@ -1817,7 +1817,8 @@ components:
           - type: string
           - type: 'null'
           title: Fail Reason
-          description: 실패 이유 (no_person / sensor_lost / too_much_motion)
+          description: '실패 이유 (no_person / sensor_lost / too_much_motion / pressure_low:
+            덜 눌린 센서가 있음, 깊숙이 바르게 앉기)'
         using_previous:
           type: boolean
           title: Using Previous

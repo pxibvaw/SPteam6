@@ -9,7 +9,7 @@
 - spidev, gpiozero 같은 Pi 전용 라이브러리는 __init__ 안에서 import한다
   (그래야 이 파일과 서버 코드를 Pi 없는 PC에서도 불러올 수 있고, mock 시험이 PC에서 돈다).
 - 전원 정책이 끄고 켤 수 있게 power_on(ts) / power_off(ts)를 두어도 된다 (없어도 됨).
-- 카메라(PoseSource)는 ai/camera가 준비되면 여기서 같이 만든다. 지금은 pose=None.
+- 카메라(PoseSource)는 ai/camera/pose_source.py의 CameraPoseSource를 쓴다 (camera="picam"/"webcam", 기본은 "none" = 카메라 없이).
 """
 from __future__ import annotations
 
@@ -41,12 +41,19 @@ def _load(spec: tuple[str, str, str], cfg: dict):
         raise SensorError(f"{module}에 {cls} 클래스가 없음") from e
 
 
-def build_hub(cfg: dict, *, pose=None) -> SensorHub:
+def build_hub(cfg: dict, *, camera: str = "none", rotate180: bool = False, pose=None) -> SensorHub:
     """실제 센서를 열어서 SensorHub로 묶는다. 하나라도 못 열면 SensorError.
 
-    pose: 카메라(PoseSource)를 이미 만들었으면 넘긴다 (없으면 카메라 없이 동작).
+    camera: none(카메라 없이) / picam(Pi 카메라) / webcam(맥·PC 웹캠, 시험용). 카메라는 서버 전원 정책이 켜 줄 때 시작한다.
+    pose: 직접 만든 PoseSource를 넘기면 camera 대신 그걸 쓴다.
     """
     pr = cfg["pressure"]
+    if pose is None and camera != "none":
+        from ai.camera.pose_source import CameraPoseSource
+        try:
+            pose = CameraPoseSource.from_config(cfg, camera=camera, rotate180=rotate180)
+        except ValueError as e:
+            raise SensorError(str(e)) from e
     pressure = _load(PRESSURE, cfg)
     try:
         distance = _load(DISTANCE, cfg)

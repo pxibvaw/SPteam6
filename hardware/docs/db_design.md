@@ -174,7 +174,7 @@
 | `id` PK | |
 | `kind` | `initial`(처음) / `session`(세션 시작 때마다) / `recalibration`(온보딩·설정의 다시 측정) / `adjusted`(AI 보정 결과) |
 | `status` | `ok` / `failed` |
-| `fail_reason` | `no_person` / `sensor_lost` / `too_much_motion` |
+| `fail_reason` | `no_person` / `sensor_lost` / `too_much_motion` / `pressure_low` (AI 엔진: 압력 센서가 최대치의 25% 미만, real 모드) |
 | `measured_at`, `session_id`, `seconds` | |
 | `layout_id` FK | |
 | `pressure` | JSON 채널별 평균 |

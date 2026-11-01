@@ -645,6 +645,9 @@ def main() -> int:
                     help="SQLite 파일 (기본: mock은 data/synthetic/sitsense_mock.db, "
                          "real은 data/sitsense.db — 서로 섞이지 않게 따로. *.db는 git에서 무시됨)")
     ap.add_argument("--no-db", action="store_true", help="저장하지 않음")
+    ap.add_argument("--camera", choices=["none", "picam", "webcam"], default="none",
+                    help="real 모드의 카메라: none(없이) / picam(Pi 카메라) / webcam(시험용)")
+    ap.add_argument("--rotate180", action="store_true", help="카메라를 거꾸로 달았을 때")
     ap.add_argument("--autostart", action="store_true",
                     help="켜자마자 PC 시계로 시각 동기화 + 세션 시작 (앱 없이 바로 데이터 보기)")
     ap.add_argument("--export-openapi", action="store_true", help=f"{OPENAPI_PATH.name}만 만들고 종료")
@@ -667,7 +670,7 @@ def main() -> int:
         from hardware.sensors.factory import build_hub
         from hardware.server.real_runtime import RealRuntime
         try:
-            runtime = RealRuntime(cfg, build_hub(cfg), db_path=db_path)
+            runtime = RealRuntime(cfg, build_hub(cfg, camera=args.camera, rotate180=args.rotate180), db_path=db_path)
         except SensorError as e:
             log.error("%s", e)
             return 2

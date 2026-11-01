@@ -4,11 +4,10 @@ mock 서버(mock_server.py)와 같은 API·세션·기준 자세·착석 구간�
 데이터 출처만 시나리오 재생 → 실제 센서로 바꾼다.
 
     MockRuntime  ← ScenarioPlayer(시나리오) + MockEngine(가짜 판단)
-    RealRuntime  ← RealSource(SensorHub)    + RealEngine(판단 자리 비움)
+    RealRuntime  ← RealSource(SensorHub)    + RealEngine(AI 엔진 ai/engine/sitsense_engine.py)
 
-판단(좌면·목·기울기)은 AI 엔진이 합쳐지기 전까지 UNKNOWN으로 둔다 (자리 비움만 압력으로 판단).
-  → 착석 구간·시간·압력·거리·압력 중심은 실제 값으로 기록되고, 자세는 unknown으로 센다.
-  AI 엔진이 준비되면 RealEngine.judge_seat()/judge_upper()만 바꾸면 된다.
+판단(좌면·목·기울기·화면 거리)은 AI 엔진이 한다. 엔진 결과는 이미 4초 유지를 거친 확정 상태라서
+서버의 3초 필터는 건너뛴다 (PassThroughFilter). 카메라가 없으면 목·기울기는 unknown.
 
 센서 전원 정책(power.py)은 센서를 GatedSensor로 감싸서 적용한다:
   꺼진 거리센서는 읽지 않고 '실패'로, 꺼진 카메라는 None으로 채운다 (SensorHub 규칙 그대로).
@@ -19,7 +18,7 @@ import dataclasses
 import logging
 from pathlib import Path
 
-from common.schema import HeadState, SeatState, TiltState
+from common.schema import DistanceLevel, HeadState, SeatState, TiltState
 from common.sensors_base import DistanceReading, Sample, Sensor, SensorHub, now
 from hardware.mock.generator import CAMERA_WARMUP_SEC
 from hardware.mock.scenarios import Step
@@ -134,19 +133,66 @@ class RealSource:
 # ---------------------------------------------------------------------------
 # 판단 (AI 엔진 연결 전)
 # ---------------------------------------------------------------------------
-class RealEngine(MockEngine):
-    """MockEngine의 기준 자세·착석 구간·응답 만들기는 그대로 쓰고, 판단만 비운다.
+class PassThroughFilter:
+    """AI 엔진이 이미 유지 시간(4초)을 거친 확정 상태를 주므로 서버는 시간 필터를 또 걸지 않는다
+    (또 걸면 반영이 8초 넘게 늦어짐 — docs/ai_engine.md)"""
 
-    AI 엔진 연결 때 이 두 메서드를 ai/engine 결과로 바꾼다 (반환 모양은 MockEngine과 같음).
+    def update(self, new_state, ts: float):
+        return new_state
+
+    def pending(self, ts: float):
+        return None
+
+
+class RealEngine(MockEngine):
+    """MockEngine의 기준 자세 흐름·착석 구간·응답 만들기는 그대로 쓰고, 판단만 AI 엔진(SitSenseEngine)으로 바꾼다.
+
+    - 기준 측정: 서버의 품질 검사(no_person / sensor_lost / too_much_motion)를 통과하면 AI 엔진 calibrate()
+      → 실패하면 pressure_low / no_person (직전 기준 유지)
+    - 매 순간: AI 엔진 결과(좌면·목·기울기 확정 상태, pending, 거리 단계)를 그대로 쓴다
+    - 판단 엔진을 못 불러오면(모델 파일 없음 등) 서버를 켤 때 바로 에러로 알린다
     """
 
+    def __init__(self, cfg: dict, seed: int | None = None, *, auto_baseline: bool = True,
+                 baseline=None, require_camera: bool = True):
+        from ai.engine.sitsense_engine import SitSenseEngine    # 모델·sklearn을 real 모드에서만 불러옴
+        super().__init__(cfg, seed, auto_baseline=auto_baseline, baseline=baseline)
+        self.ai = SitSenseEngine(cfg, require_camera=require_camera)
+        self.require_pose = require_camera
+        self.filters = {k: PassThroughFilter() for k in ("seat", "head", "tilt")}
+        self._r = None
+        if baseline is not None:                    # 저장된 기준으로 시작 (서버 재시작 등)
+            self.ai.restore(baseline.pressure, baseline.distance_mm, baseline.pose)
+
+    # --- 기준 자세 ----------------------------------------------------------
+    def on_calibrate(self, samples):
+        res = self.ai.calibrate(samples)
+        if not res.ok:
+            log.warning("AI 기준 측정 실패: %s (%s)", res.reason, res.message)
+        return res.reason
+
+    # --- 판단 ---------------------------------------------------------------
+    def update(self, sample: Sample, step: Step) -> dict:
+        self._r = self.ai.update(sample)
+        return super().update(sample, step)
+
     def judge_seat(self, sample: Sample, step: Step):
-        if is_empty(sample.pressure.values):
+        if is_empty(sample.pressure.values):        # 기준 측정 전에도 빈 의자는 알아야 함 (착석 구간)
             return SeatState.EMPTY, 0.95
-        return SeatState.UNKNOWN, 0.0
+        r = self._r
+        return SeatState(r.seat_state), float(r.confidence["seat"])
 
     def judge_upper(self, sample: Sample, step: Step):
-        return HeadState.UNKNOWN, TiltState.UNKNOWN, 0.0, 0.0, {}, {}
+        r = self._r
+        return (HeadState(r.head_state), TiltState(r.tilt_state),
+                float(r.confidence["head"]), float(r.confidence["tilt"]), r.deltas, r.cues)
+
+    def pending_list(self, ts: float) -> list[dict]:
+        return list(self._r.pending) if self._r is not None else []
+
+    def distance_level_of(self, dist_mm):
+        # 화면 거리는 엔진의 4초 유지 단계를 쓴다 (잠깐 숙일 때 경고가 깜빡이지 않게)
+        return DistanceLevel(self._r.distance_level) if self._r is not None else DistanceLevel.UNKNOWN
 
 
 # ---------------------------------------------------------------------------
@@ -179,8 +225,17 @@ class RealRuntime(MockRuntime):
         return RealSource(self.hub, self.clock, self.cfg)
 
     def _new_engine(self):
-        e = super()._new_engine()
-        e.require_pose = self.has_camera            # 카메라가 없으면 기준 자세에 사람 인식을 요구하지 않음
+        # 카메라가 없으면 기준 자세에 사람 인식을 요구하지 않음 (목·기울기는 unknown)
+        cfg = self.cfg
+        hold = self.session_settings.get("posture_hold_sec")
+        if hold is not None and hold != cfg["thresholds"]["short_filter_sec"]:
+            import copy
+            cfg = copy.deepcopy(cfg)
+            cfg["thresholds"]["short_filter_sec"] = hold        # 앱 설정이 config.yaml보다 우선
+        e = RealEngine(cfg, seed=self.seed, auto_baseline=False, baseline=self.current_baseline,
+                       require_camera=self.has_camera)
+        e.on_measure_start = self._on_measure_start
+        e.on_baseline = self._on_baseline
         return e
 
     def _on_measure_start(self, ts: float, seconds: float) -> None:

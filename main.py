@@ -43,9 +43,8 @@ def build_source(cfg: dict, args):
         return ReplaySource(path, loop=cfg["replay"]["loop"],
                             expected_channels=cfg["pressure"]["n_channels"])
     if args.mode == "real":
-        # TODO(AI): pose에는 ai/camera의 MediaPipe 결과를 주는 PoseSource를 연결 (지금은 카메라 없이)
         from hardware.sensors.factory import build_hub     # Pi 전용 라이브러리는 real일 때만 불러옴
-        return build_hub(cfg)
+        return build_hub(cfg, camera=args.camera, rotate180=args.rotate180)
     raise ConfigError(f"알 수 없는 mode: {args.mode}")
 
 
@@ -71,6 +70,9 @@ def parse_args(cfg: dict) -> argparse.Namespace:
     ap.add_argument("--chair", default="", help="세션 정보: 의자")
     ap.add_argument("--cushion", default="", help="세션 정보: 방석")
     ap.add_argument("--notes", default="", help="세션 정보: 특이사항")
+    ap.add_argument("--camera", choices=["none", "picam", "webcam"], default="none",
+                    help="real 모드의 카메라: none(없이) / picam(Pi 카메라) / webcam(시험용)")
+    ap.add_argument("--rotate180", action="store_true", help="카메라를 거꾸로 달았을 때")
     ap.add_argument("--quiet", action="store_true", help="매 줄 출력하지 않기")
     args = ap.parse_args()
     if args.seconds is not None and args.seconds <= 0:

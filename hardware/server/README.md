@@ -22,7 +22,7 @@
 | `mock_engine.py` | 가짜 판단: AI 엔진(`ai/engine/upper_body.py`)과 같은 모양의 결과(상태, 확신도, deltas, cues, 3초 필터) |
 | `schemas.py` | 앱에 주는 JSON 형식. **API 형식을 바꿀 때는 여기만 고친다** |
 | `mock_server.py` | FastAPI mock 서버 (세션·시각·센서 전원을 따라 시나리오 재생) |
-| `real_runtime.py` | **real 모드**: 실제 센서(`SensorHub`)를 읽어 같은 서버를 돌림 (`RealSource` 시각 변환, `GatedSensor` 전원 연결, `RealEngine` 판단 자리). 판단은 AI 연결 전까지 unknown |
+| `real_runtime.py` | **real 모드**: 실제 센서(`SensorHub`)를 읽어 같은 서버를 돌림 (`RealSource` 시각 변환, `GatedSensor` 전원 연결, `RealEngine` = AI 엔진 `ai/engine/sitsense_engine.py` 연결, 서버 시간 필터는 건너뜀) |
 | `../sensors/factory.py` | 실제 센서를 열어 `SensorHub`로 묶음 (`main.py --mode real`, 서버 real 모드 공용). 센서 클래스 약속이 적혀 있음 |
 | `clock.py` | 앱 기준 시각: '앱 시각 − Pi 단조시계' 차이만 저장, `boot_id` |
 | `session.py` | 세션 상태 (idle / running / paused), 경과 시간 |
@@ -214,7 +214,7 @@ python -m hardware.server.mock_server --export-openapi   # schemas.py를 고친 
 
 ## 나중에 바꿀 곳
 
-- **AI 엔진이 합쳐지면:** `mock_engine.py`의 `judge_upper()` / `judge_seat()` 대신 AI 판단 결과를 넣는다 (응답 형식은 그대로)
+- **mock 서버에도 AI 엔진을 쓰려면:** `RealEngine`을 mock 시나리오에 쓰면 된다 (지금 mock은 기존 가짜 판단 유지)
 - **실제 센서 클래스가 오면:** `../sensors/pressure.py`(`Mcp3208Pressure`), `../sensors/distance.py`(`Hcsr04Distance`)를
   `../sensors/factory.py`의 약속대로 만들면 real 모드가 바로 읽는다. Pi 전용 라이브러리(`spidev`, `gpiozero`)는 `__init__` 안에서 import.
   카메라는 `ai/camera`의 `PoseSource`를 `build_hub(cfg, pose=…)`에 넘기면 된다.
@@ -231,6 +231,8 @@ python -m hardware.server.check_real
 ```
 
 - API·세션·기준 자세·착석 구간·DB는 mock 모드와 같다. 응답 `mode`만 `real`, `scenario*`는 null, `/mock/*`는 없다.
-- 판단(`seat_state`·`head_state`·`tilt_state`)은 AI 엔진 연결 전까지 `unknown`(빈 의자는 `empty`). 압력·거리·압력 중심·착석 구간 시간은 실제 값이다.
+- 판단(`seat_state`·`head_state`·`tilt_state`·`distance_level`)은 AI 엔진(`SitSenseEngine`)이 한다. 엔진이 이미 4초 유지를 거친 확정 상태를 주므로 서버의 3초 필터는 real에서 건너뛴다(`PassThroughFilter`). 화면 거리 단계도 엔진의 4초 유지 값을 쓴다.
+- 기준 측정 실패 사유에 `pressure_low`(센서가 최대치의 25% 미만)가 추가됐다 → 앱 안내 문구 필요. 성공한 기준이 없으면 세션이 멈춘다(`baseline_failed`).
+- 카메라: `--camera picam`(Pi) / `webcam`(시험용), 거꾸로 달았으면 `--rotate180`. 기본 `none`이면 목·기울기는 `unknown`.
 - 카메라가 없으면(`pose=None`) 기준 자세를 사람 인식 없이 잰다.
 - 센서 시각은 읽은 직후 앱 기준 시각으로 바꾼다 (`RealSource.read`).

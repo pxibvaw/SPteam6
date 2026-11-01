@@ -174,6 +174,8 @@ class MockEngine:
             reason = "sensor_lost"
         elif totals.std() / max(totals.mean(), 1.0) > BASELINE_MAX_PRESSURE_CV:
             reason = "too_much_motion"
+        if reason is None:
+            reason = self.on_calibrate(buf)         # 판단 엔진이 따로 기준을 잡는 경우 (real 모드)
         result = {"kind": m["kind"], "status": "ok" if reason is None else "failed", "fail_reason": reason,
                   "measured_at": ts, "seconds": round(ts - m["start"], 1), "value": None}
         if reason is None:
@@ -187,6 +189,22 @@ class MockEngine:
         self.measure, self._buf, self.last_result = None, [], result     # 실패면 이전 기준(self.baseline) 유지
         if self.on_baseline:
             self.on_baseline(result)
+
+    def on_calibrate(self, samples: list[Sample]) -> str | None:
+        """기준 측정 품질 검사를 통과한 뒤 부른다. 실패 이유 문자열을 돌려주면 측정 실패 (mock은 항상 통과)"""
+        return None
+
+    def distance_level_of(self, dist_mm: float | None) -> DistanceLevel:
+        return classify_distance(dist_mm, self.ok_mm, self.warn_mm)
+
+    def pending_list(self, ts: float) -> list[dict]:
+        """바뀌기를 기다리는 상태 (3초 필터)"""
+        out = []
+        for kind, f in self.filters.items():
+            p = f.pending(ts)
+            if p is not None:
+                out.append({"kind": kind, "state": p[0].value, "remaining_sec": round(p[1], 1)})
+        return out
 
     # --- 가짜 판단 ----------------------------------------------------------
     def judge_seat(self, sample: Sample, step: Step) -> tuple[SeatState, float]:
@@ -296,11 +314,7 @@ class MockEngine:
         postures = postures_of(seat.value, head.value, tilt.value)     # 우선순위 순서 (seating.PRIORITY)
         self.seating.update(ts, empty=is_empty(values), seat=seat.value, head=head.value,
                             tilt=tilt.value, postures=postures)
-        pending = []
-        for kind, f in self.filters.items():
-            p = f.pending(ts)
-            if p is not None:
-                pending.append({"kind": kind, "state": p[0].value, "remaining_sec": round(p[1], 1)})
+        pending = self.pending_list(ts)
 
         pose = sample.pose
         self.latest = {
@@ -315,8 +329,7 @@ class MockEngine:
             "deltas": deltas,
             "cues": cues,
             "distance_mm": dist_mm,
-            "distance_level": classify_distance(dist_mm, self.ok_mm, self.warn_mm) if seated
-            else DistanceLevel.UNKNOWN,
+            "distance_level": self.distance_level_of(dist_mm) if seated else DistanceLevel.UNKNOWN,
             "closer_than_baseline": closer if seated else None,
             "pressure": values,
             "pressure_ratio": ratio,

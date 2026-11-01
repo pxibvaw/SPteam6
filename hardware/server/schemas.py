@@ -261,7 +261,7 @@ class SessionBaseline(BaseModel):
                                                   "ready 기준 있음 / failed 마지막 측정 실패")
     kind: str | None = Field(None, description="측정 중이거나 마지막 측정의 종류 (initial / session / recalibration)")
     remaining_sec: float | None = Field(None, description="측정 중이면 남은 초 (앉기를 기다리는 중이면 측정 시간 전체)")
-    fail_reason: str | None = Field(None, description="실패 이유 (no_person / sensor_lost / too_much_motion)")
+    fail_reason: str | None = Field(None, description="실패 이유 (no_person / sensor_lost / too_much_motion / pressure_low: 덜 눌린 센서가 있음, 깊숙이 바르게 앉기)")
     using_previous: bool = Field(..., description="이번 측정이 실패해서 직전 성공 기준으로 판단 중인지")
     measured_at: float | None = Field(None, description="지금 쓰는 기준을 잰 시각")
 
