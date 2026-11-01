@@ -116,6 +116,17 @@ python main.py --mode mock --seconds 3     # 가짜 센서 값이 출력되면 �
 | VL53L1X (적외선 ToF 거리) | I2C | 모니터 위, 카메라와 함께 |
 | 카메라 (정면, 1280×720) | CSI (Picamera2) | 모니터 위 |
 
+## 카메라 상체 판단 데모 (맥 웹캠)
+
+```bash
+python -m ai.camera.demo                 # 처음 10초 바른 자세 → 거북목·좌우 기울기 판단 표시
+python -m ai.camera.demo --no-window     # 화면 없이 1초마다 결과만 출력
+```
+
+- 키: `b` 기준 다시 측정, `q` 종료
+- 처음 실행 때 맥이 카메라 접근을 물어보면 터미널(또는 VS Code)을 허용
+- 판단 기준값은 `config.yaml`의 `upper_rules` (전부 임시값, 직접 앉아서 조정)
+
 ## 데이터 수집
 
 ```bash
