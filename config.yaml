@@ -5,36 +5,35 @@ mode: mock            # mock: 가짜 센서 / replay: 저장한 CSV 재생 / rea
 subject: p1           # 데이터 수집할 때 사람 ID (p1, p2, p3 …, 실명 쓰지 않기)
 
 sampling:
-  hz: 10              # 1초에 몇 번 센서를 읽을지
+  hz: 2               # 1초에 몇 번 센서를 읽을지 (수집 스크립트와 같은 0.5초 간격)
 
-pressure:             # FSR 406 × 8 → MCP3008 1개 (8채널)
-  n_channels: 8       # 8개로 수집 → feature importance로 6개 선별
-  adc_max: 1023       # MCP3008은 10bit (0~1023)
+pressure:             # FSR 406 × 6 → MCP3208 1개 (SPI, CE0)
+  adc: mcp3208
+  n_channels: 6       # CH2, CH5는 쓰지 않음
+  channels: [0, 1, 3, 4, 6, 7]   # 읽는 MCP3208 채널 번호. 순서 = p0, p1, … (CSV 열·positions 순서)
+  adc_max: 4095       # MCP3208은 12bit (0~4095)
   spi_bus: 0
   spi_device: 0       # CE0
-  # 채널별 방석 위치 (사람 기준) x: 왼쪽 -1 ~ 오른쪽 +1, y: 뒤 -1 ~ 앞 +1
-  # ⚠️ 임시 배치(2열 × 4행). 하드웨어 팀원의 FSR 배치도가 나오면 실제 위치로 수정
+  # p번호별 방석 위치 (사람 기준) x: 왼쪽 -1 ~ 오른쪽 +1, y: 뒤 -1 ~ 앞 +1
+  # 배치 (앞 → 뒤):  CH4  CH2(안 씀)  CH1  /  CH6  CH3  /  CH7  CH5(안 씀)  CH0
+  # ⚠️ 좌표는 2열 × 3행 배치를 대략 옮긴 값. 방석 실측 후 수정
   positions:
-    - [-0.5,  0.75]   # p0 앞 왼쪽
-    - [ 0.5,  0.75]   # p1 앞 오른쪽
-    - [-0.5,  0.25]   # p2
-    - [ 0.5,  0.25]   # p3
-    - [-0.5, -0.25]   # p4
-    - [ 0.5, -0.25]   # p5
-    - [-0.5, -0.75]   # p6 뒤 왼쪽 (엉덩이 쪽)
-    - [ 0.5, -0.75]   # p7 뒤 오른쪽
+    - [ 0.5, -0.75]   # p0 = CH0 맨 뒤 오른쪽
+    - [ 0.5,  0.75]   # p1 = CH1 맨 앞 오른쪽
+    - [ 0.5,  0.0 ]   # p2 = CH3 중간 오른쪽
+    - [-0.5,  0.75]   # p3 = CH4 맨 앞 왼쪽
+    - [-0.5,  0.0 ]   # p4 = CH6 중간 왼쪽
+    - [-0.5, -0.75]   # p5 = CH7 맨 뒤 왼쪽
 
-distance:             # VL53L1X (적외선 ToF, I2C)
-  sensor: vl53l1x
-  i2c_bus: 1
-  i2c_address: 0x29   # VL53L1X 기본 주소
-  range_mode: short   # short: 약 1.3m까지, 주변광에 강함 (우리 범위 40~80cm에 충분)
-  timing_budget_ms: 50
-  min_mm: 150         # 이보다 가깝거나
-  max_mm: 1300        # 멀면 잘못된 값으로 보고 버림
-  median_window: 5    # 튀는 값 걸러내기용 중앙값 개수
+distance:             # HC-SR04 (초음파, GPIO). Echo는 분압 회로로 3.3V로 낮춰서 연결
+  sensor: hc-sr04
+  trigger_pin: 23     # BCM 번호 (물리 핀 16)
+  echo_pin: 24        # BCM 번호 (물리 핀 18)
+  min_mm: 20          # 이보다 가깝거나 (HC-SR04 최소 약 2cm)
+  max_mm: 2000        # 멀면 측정 안 된 것으로 보고 빈칸 (수집 스크립트 MAX_DIST_M = 2.0)
+  median_window: 5    # 튀는 값 걸러내기용 중앙값 개수 (gpiozero queue_len)
 
-camera:               # 정면, 모니터 위 (VL53L1X와 함께 설치)
+camera:               # 정면, 모니터 위 (HC-SR04와 함께 설치)
   index: 1            # 맥 웹캠 번호 (아이폰 연속성 카메라가 0번을 잡으면 1번. 확인: python -m ai.camera.demo --list-cameras)
   width: 1280         # 좌표를 픽셀로 바꿀 때도 사용
   height: 720

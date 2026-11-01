@@ -9,6 +9,5 @@
 
 -r requirements.txt
 
-spidev==3.8                    # MCP3008(ADC) SPI 통신 → FSR 406 압력센서 읽기
-vl53l1x==0.0.7                 # VL53L1X 거리센서 (Pimoroni, I2C) — Pi 4 64-bit용 설치 파일 있음
-smbus2==0.6.1                  # I2C 통신 (vl53l1x가 사용)
+spidev==3.8                    # MCP3208(ADC) SPI 통신 → FSR 406 압력센서 읽기
+gpiozero                       # HC-SR04 거리센서 (GPIO). Pi OS에 기본 설치, 버전 고정은 실제 Pi에서 확인 후

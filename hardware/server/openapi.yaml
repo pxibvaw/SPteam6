@@ -1,0 +1,2281 @@
+# 자동 생성 파일 — 직접 고치지 말고 hardware/server/schemas.py를 고친 뒤
+#   python -m hardware.server.mock_server --export-openapi
+openapi: 3.1.0
+info:
+  title: SitSense API (mock)
+  description: 'Raspberry Pi 서버 → 안드로이드 앱. 같은 Wi-Fi에서 `http://<Pi IP>:8000`.
+
+
+    지금은 **mock 서버**: 시나리오 더미 데이터와 가짜 판단 결과를 준다. 시각은 time.time() 초, 거리 mm, 각도 °, 비율
+    0~1. 표시용 글자는 앱이 만든다. 영상 이미지는 어떤 응답에도 없다.'
+  version: 0.1.0-mock
+paths:
+  /status:
+    get:
+      tags:
+      - 기기
+      summary: 서버·센서 상태
+      operationId: status_status_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /current:
+    get:
+      tags:
+      - 자세
+      summary: 지금 자세 (1~3초마다 호출)
+      operationId: current_current_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Current'
+        '404':
+          description: 아직 기록 없음
+  /history:
+    get:
+      tags:
+      - 자세
+      summary: 최근 판단 기록 (1초에 1개)
+      operationId: history_history_get
+      parameters:
+      - name: seconds
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 3600
+          minimum: 1
+          description: 최근 몇 초
+          default: 60
+          title: Seconds
+        description: 최근 몇 초
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/History'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /seating:
+    get:
+      tags:
+      - 착석
+      summary: 지금 착석 구간 (자리 비움 5초 규칙, 정상/비정상/unknown)
+      operationId: seating_seating_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Seating'
+  /seating/segments:
+    get:
+      tags:
+      - 착석
+      summary: 끝난 착석 구간 목록
+      operationId: seating_segments_seating_segments_get
+      parameters:
+      - name: hours
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 48
+          minimum: 1
+          description: 최근 몇 시간 안에 끝난 구간
+          default: 24
+          title: Hours
+        description: 최근 몇 시간 안에 끝난 구간
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SeatingSegments'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /baseline:
+    get:
+      tags:
+      - 기준 자세
+      summary: 기준(바른) 자세 측정값
+      operationId: baseline_baseline_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Baseline'
+  /calibrate:
+    post:
+      tags:
+      - 기준 자세
+      summary: 기준 자세 측정 (앉으면 10초). 세션 없이(온보딩) 또는 세션 중(설정의 다시 측정)
+      operationId: calibrate_calibrate_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalibrateResult'
+        '409':
+          description: 지금 상태에서 할 수 없음 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: 잘못된 값 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /time/sync:
+    post:
+      tags:
+      - 시각
+      summary: 앱 시각·시간대 보내기 (연결할 때, 세션 시작 전마다)
+      operationId: time_sync_time_sync_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TimeSync'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimeStatus'
+        '409':
+          description: 지금 상태에서 할 수 없음 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: 잘못된 값 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /time:
+    get:
+      tags:
+      - 시각
+      summary: 시각 동기화 상태 (boot_id가 바뀌었거나 synced=false면 다시 동기화)
+      operationId: time_status_time_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimeStatus'
+  /session:
+    get:
+      tags:
+      - 세션
+      summary: 세션 상태·경과 시간·센서 전원
+      operationId: session_status_session_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionStatus'
+  /session/start:
+    post:
+      tags:
+      - 세션
+      summary: 측정 시작 (시각 동기화 후에만). 기준 자세 측정부터
+      operationId: session_start_session_start_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionStatus'
+        '409':
+          description: 지금 상태에서 할 수 없음 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: 잘못된 값 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /session/pause:
+    post:
+      tags:
+      - 세션
+      summary: '일시정지: 기록·판단 멈춤, 카메라·거리 끔 (착석 구간은 여기서 끝)'
+      operationId: session_pause_session_pause_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionStatus'
+        '409':
+          description: 지금 상태에서 할 수 없음 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: 잘못된 값 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /session/resume:
+    post:
+      tags:
+      - 세션
+      summary: 재개
+      operationId: session_resume_session_resume_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionStatus'
+        '409':
+          description: 지금 상태에서 할 수 없음 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: 잘못된 값 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /session/stop:
+    post:
+      tags:
+      - 세션
+      summary: '정지: 세션 끝, 센서 모두 끔 (앉아도 자동으로 다시 시작하지 않음)'
+      operationId: session_stop_session_stop_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionStatus'
+        '409':
+          description: 지금 상태에서 할 수 없음 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: 잘못된 값 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /reports/home:
+    get:
+      tags:
+      - 리포트
+      summary: '홈 요약: 정상 비율·총 착석·하루 평균 자세·좌우 편향·목표 4종 오늘/어제'
+      operationId: report_home_reports_home_get
+      parameters:
+      - name: date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: YYYY-MM-DD (기본 오늘, 한국 시간)
+          title: Date
+        description: YYYY-MM-DD (기본 오늘, 한국 시간)
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HomeReport'
+        '409':
+          description: 지금 상태에서 할 수 없음 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: 잘못된 값 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: DB 없이 켠 서버 (NO_DB)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /reports/daily:
+    get:
+      tags:
+      - 리포트
+      summary: 일간 리포트 (지난 날은 자정 요약, 오늘은 실시간)
+      operationId: report_daily_reports_daily_get
+      parameters:
+      - name: date
+        in: query
+        required: true
+        schema:
+          type: string
+          description: YYYY-MM-DD (한국 시간)
+          title: Date
+        description: YYYY-MM-DD (한국 시간)
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DailyReport'
+        '409':
+          description: 지금 상태에서 할 수 없음 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: 잘못된 값 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: DB 없이 켠 서버 (NO_DB)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /reports/weekly:
+    get:
+      tags:
+      - 리포트
+      summary: 주간 리포트 (월~일, 지난주 비교, 시간대별 패턴)
+      operationId: report_weekly_reports_weekly_get
+      parameters:
+      - name: start
+        in: query
+        required: true
+        schema:
+          type: string
+          description: 그 주의 아무 날 YYYY-MM-DD (월요일로 맞춤)
+          title: Start
+        description: 그 주의 아무 날 YYYY-MM-DD (월요일로 맞춤)
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WeeklyReport'
+        '409':
+          description: 지금 상태에서 할 수 없음 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: 잘못된 값 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: DB 없이 켠 서버 (NO_DB)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /reports/goals:
+    get:
+      tags:
+      - 리포트
+      summary: 목표·피드백 카드 4종 (오늘·어제·지난주 평균·최근 7일·추세·주된 방향)
+      operationId: report_goals_reports_goals_get
+      parameters:
+      - name: date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: YYYY-MM-DD (기본 오늘)
+          title: Date
+        description: YYYY-MM-DD (기본 오늘)
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoalsReport'
+        '409':
+          description: 지금 상태에서 할 수 없음 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: 잘못된 값 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: DB 없이 켠 서버 (NO_DB)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /layout:
+    get:
+      tags:
+      - 기기
+      summary: 센서 배치 (채널별 위치). /current의 pressure·pressure_ratio 순서와 같음
+      operationId: layout_layout_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Layout'
+  /records/reset:
+    post:
+      tags:
+      - 기록
+      summary: 기록 초기화 (설정·기준 자세는 유지). 세션이 없을 때만, 확인 문구 필요
+      operationId: records_reset_records_reset_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordsReset'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordsResetResult'
+        '409':
+          description: 지금 상태에서 할 수 없음 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: 잘못된 값 (detail.code 참고)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /mock/scenarios:
+    get:
+      tags:
+      - mock 전용
+      summary: 시나리오 목록
+      operationId: scenarios_mock_scenarios_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/ScenarioInfo'
+                type: array
+                title: Response Scenarios Mock Scenarios Get
+  /mock/scenario:
+    post:
+      tags:
+      - mock 전용
+      summary: 재생할 시나리오 바꾸기 (기준 자세부터 다시 시작)
+      operationId: select_scenario_mock_scenario_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScenarioSelect'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioInfo'
+        '404':
+          description: 없는 시나리오
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+components:
+  schemas:
+    Baseline:
+      properties:
+        state:
+          $ref: '#/components/schemas/BaselineState'
+          description: none 측정 전 / measuring 측정 중 / ready 완료
+        remaining_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Remaining Sec
+          description: 측정 중이면 남은 초
+        waiting_seat:
+          type: boolean
+          title: Waiting Seat
+          description: 측정을 요청했지만 앉기를 기다리는 중 (이때 state는 measuring)
+          default: false
+        created_at:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Created At
+          description: 기준값을 만든 시각
+        seconds:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Seconds
+          description: 측정 시간
+        pressure:
+          anyOf:
+          - items:
+              type: number
+            type: array
+          - type: 'null'
+          title: Pressure
+          description: 채널별 평균 압력
+        distance_mm:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Distance Mm
+          description: 기준 화면 거리 (중앙값)
+        pose:
+          anyOf:
+          - additionalProperties:
+              items:
+                type: number
+              type: array
+            type: object
+          - type: 'null'
+          title: Pose
+          description: 부위 7개의 평균 좌표 [x, y, z, visibility] (0~1 비율, 영상 아님)
+      type: object
+      required:
+      - state
+      title: Baseline
+      description: 기준(바른) 자세 측정값. 측정 중에도 이전 기준값을 준다
+    BaselinePhase:
+      type: string
+      enum:
+      - none
+      - waiting_seat
+      - measuring
+      - ready
+      - failed
+      title: BaselinePhase
+    BaselineState:
+      type: string
+      enum:
+      - none
+      - measuring
+      - ready
+      title: BaselineState
+    CalibrateResult:
+      properties:
+        started:
+          type: boolean
+          title: Started
+        seconds:
+          type: number
+          title: Seconds
+          description: 측정에 걸리는 초 (이 동안 바른 자세로 앉기)
+      type: object
+      required:
+      - started
+      - seconds
+      title: CalibrateResult
+    Collapse:
+      properties:
+        avg_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Avg Sec
+          description: '자세 무너짐: 착석 시작 → 첫 비정상 확정 평균 (그날 시작한 구간, null 제외)'
+        count:
+          type: integer
+          title: Count
+          description: 평균에 들어간 구간 수
+        segments:
+          type: integer
+          title: Segments
+          description: 그날 시작한 착석 구간 수
+      type: object
+      required:
+      - count
+      - segments
+      title: Collapse
+    Confidence:
+      properties:
+        seat:
+          type: number
+          maximum: 1.0
+          minimum: 0.0
+          title: Seat
+          description: 좌면 판단 확신도 (0~1)
+        head:
+          type: number
+          maximum: 1.0
+          minimum: 0.0
+          title: Head
+          description: 목 판단 확신도 (0~1). 카메라 미인식이면 0
+        tilt:
+          type: number
+          maximum: 1.0
+          minimum: 0.0
+          title: Tilt
+          description: 기울기 판단 확신도 (0~1). 카메라 미인식이면 0
+      type: object
+      required:
+      - seat
+      - head
+      - tilt
+      title: Confidence
+    Cues:
+      properties:
+        neck_drop:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Neck Drop
+        face_grow:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Face Grow
+        closer:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Closer
+        shoulder_angle:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Shoulder Angle
+        head_angle:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Head Angle
+        head_offset:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Head Offset
+      type: object
+      title: Cues
+      description: 각 단서가 기준값(threshold)을 넘었는지. 판단할 수 없으면 null
+    Current:
+      properties:
+        ts:
+          type: number
+          title: Ts
+          description: 측정 시각 (time.time() 초)
+        seated:
+          type: boolean
+          title: Seated
+          description: 앉아 있는지 (seat_state != empty)
+        sitting_since:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Sitting Since
+          description: 이번 연속 착석 시작 시각. 자리 비움이면 null
+        state_since:
+          type: number
+          title: State Since
+          description: 지금 자세(좌면·목·기울기)가 시작된 시각
+        seat_state:
+          $ref: '#/components/schemas/SeatState'
+        head_state:
+          $ref: '#/components/schemas/HeadState'
+        tilt_state:
+          $ref: '#/components/schemas/TiltState'
+        confidence:
+          $ref: '#/components/schemas/Confidence'
+        postures:
+          items:
+            type: string
+          type: array
+          title: Postures
+          description: 지금 나타난 나쁜 자세 (cross_left, cross_right, lean_left, lean_right,
+            forward_head, tilt_left, tilt_right). 없으면 []
+        pending:
+          items:
+            $ref: '#/components/schemas/Pending'
+          type: array
+          title: Pending
+          description: 확정 대기 중인 자세 변화
+        deltas:
+          $ref: '#/components/schemas/Deltas'
+        cues:
+          $ref: '#/components/schemas/Cues'
+        distance_mm:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Distance Mm
+          description: 화면 거리 (mm). 측정 실패면 null
+        distance_level:
+          $ref: '#/components/schemas/DistanceLevel'
+          description: ok 50cm 이상 / caution 40~50cm / warning 40cm 미만 / unknown
+        closer_than_baseline:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Closer Than Baseline
+          description: 기준보다 10cm 이상 가까운지. 기준값 없으면 null
+        pressure:
+          items:
+            type: integer
+          type: array
+          title: Pressure
+          description: FSR 채널별 원래 값 (0~4095, MCP3208 12bit). 순서 = config.yaml pressure.positions
+        pressure_ratio:
+          anyOf:
+          - items:
+              type: number
+            type: array
+          - type: 'null'
+          title: Pressure Ratio
+          description: 채널별 압력 비율 (합 1). 자리 비움이면 null
+        center_of_pressure:
+          anyOf:
+          - $ref: '#/components/schemas/Point'
+          - type: 'null'
+          description: 압력 중심. x 왼쪽 -1 ~ 오른쪽 +1, y 뒤 -1 ~ 앞 +1 (사람 기준). 자리 비움이면 null
+        pose_detected:
+          type: boolean
+          title: Pose Detected
+          description: 카메라가 사람을 찾았는지
+        camera_age_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Camera Age Sec
+          description: 카메라 결과가 몇 초 전 것인지 (초당 약 5장)
+        baseline_ready:
+          type: boolean
+          title: Baseline Ready
+          description: 기준 자세가 있는지. false면 deltas 대부분이 null
+      type: object
+      required:
+      - ts
+      - seated
+      - state_since
+      - seat_state
+      - head_state
+      - tilt_state
+      - confidence
+      - postures
+      - pending
+      - deltas
+      - cues
+      - distance_level
+      - pressure
+      - pose_detected
+      - baseline_ready
+      title: Current
+      description: 지금 자세 — 홈 화면용, 1~3초마다 호출
+    DailyReport:
+      properties:
+        date:
+          type: string
+          title: Date
+        source:
+          type: string
+          title: Source
+          description: summary(자정 요약) / live(실시간 계산)
+        has_data:
+          type: boolean
+          title: Has Data
+          description: 착석 시간이 있는지
+        as_of:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: As Of
+          description: 마지막 저장 시각 — 오늘 값은 최대 1분 늦음
+        seated_sec:
+          type: number
+          title: Seated Sec
+          description: 총 착석 (unknown 포함)
+        normal_sec:
+          type: number
+          title: Normal Sec
+        abnormal_sec:
+          type: number
+          title: Abnormal Sec
+        unknown_sec:
+          type: number
+          title: Unknown Sec
+        judged_sec:
+          type: number
+          title: Judged Sec
+          description: 착석 − unknown
+        normal_ratio:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Normal Ratio
+          description: 정상 ÷ (착석 − unknown). 분모가 0이면 null
+        sessions:
+          type: integer
+          title: Sessions
+          description: 그날에 걸친 세션 수 (측정했지만 앉지 않은 날 구분용)
+        max_continuous_sec:
+          type: number
+          title: Max Continuous Sec
+          description: 최대 연속 착석 (자정에서 자름)
+        collapse:
+          $ref: '#/components/schemas/Collapse'
+        postures:
+          additionalProperties:
+            type: number
+          type: object
+          title: Postures
+          description: '자세별 누적 (겹치지 않음): normal + 7개 자세'
+        postures_raw:
+          additionalProperties:
+            type: number
+          type: object
+          title: Postures Raw
+          description: 겹치는 원래 값 (참고)
+        lean_balance:
+          $ref: '#/components/schemas/LeanBalance'
+        distance:
+          $ref: '#/components/schemas/DistanceDay'
+        top_habit:
+          anyOf:
+          - $ref: '#/components/schemas/PostureShare'
+          - type: 'null'
+          description: 가장 많이 나타난 습관 (정상 제외 최대). 없으면 null
+      type: object
+      required:
+      - date
+      - source
+      - has_data
+      - seated_sec
+      - normal_sec
+      - abnormal_sec
+      - unknown_sec
+      - judged_sec
+      - sessions
+      - max_continuous_sec
+      - collapse
+      - postures
+      - postures_raw
+      - lean_balance
+      - distance
+      title: DailyReport
+      description: 일간 리포트
+    Deltas:
+      properties:
+        neck_drop:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Neck Drop
+          description: 목 높이가 기준보다 줄어든 비율. +0.12 이상이면 거북목 단서
+        face_grow:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Face Grow
+          description: 얼굴 크기가 기준보다 커진 비율. +0.08 이상이면 거북목 단서
+        closer_mm:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Closer Mm
+          description: 기준보다 화면에 가까워진 거리 (mm). +면 가까워짐
+        shoulder_angle:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Shoulder Angle
+          description: 어깨 선 기울기 변화 (°). + 사람 왼쪽 / - 오른쪽
+        head_angle:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Head Angle
+          description: 눈 선 기울기 변화 (°). + 왼쪽 / - 오른쪽
+        head_offset:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Head Offset
+          description: 코의 좌우 이동 (어깨 너비 대비 비율). + 왼쪽 / - 오른쪽
+      type: object
+      title: Deltas
+      description: 기준 자세 대비 변화량. 카메라 미인식·기준값 없음이면 null
+    DistanceCompare:
+      properties:
+        this_week:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: This Week
+          description: 이번 주 화면 거리 평균 (mm)
+        last_week:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Last Week
+        change:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Change
+      type: object
+      title: DistanceCompare
+    DistanceDay:
+      properties:
+        avg_mm:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Avg Mm
+        closer_sec:
+          type: number
+          title: Closer Sec
+          description: 기준보다 10cm 이상 가까웠던 시간
+      type: object
+      required:
+      - closer_sec
+      title: DistanceDay
+    DistanceLevel:
+      type: string
+      enum:
+      - ok
+      - caution
+      - warning
+      - unknown
+      title: DistanceLevel
+      description: 화면 거리 단계 (기준값은 config.yaml의 thresholds)
+    EndReason:
+      type: string
+      enum:
+      - away
+      - stop
+      - pause
+      title: EndReason
+    ErrorDetail:
+      properties:
+        code:
+          type: string
+          title: Code
+          description: 앱이 처리할 오류 코드 (CLOCK_NOT_SYNCED, CLOCK_BACKWARD, CLOCK_JUMP_IN_SESSION,
+            CLOCK_BEFORE_LAST_RECORD, SESSION_ACTIVE, NOT_RUNNING, NOT_PAUSED, NO_SESSION,
+            CONFIRM_REQUIRED, INVALID_TIME, INVALID_TIMEZONE)
+        message:
+          type: string
+          title: Message
+          description: 개발자용 설명 (앱 화면 문구는 앱이 만든다)
+        resync_required:
+          type: boolean
+          title: Resync Required
+          description: true면 POST /time/sync를 다시 보내야 함
+        boot_id:
+          type: string
+          title: Boot Id
+          description: 서버가 켜질 때마다 바뀌는 값. 앱이 기억한 값과 다르면 재시작된 것
+        last_record_at:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Last Record At
+          description: CLOCK_BEFORE_LAST_RECORD일 때 Pi의 마지막 기록 시각 (앱이 날짜를 보여줄 때)
+      type: object
+      required:
+      - code
+      - message
+      - resync_required
+      - boot_id
+      title: ErrorDetail
+    ErrorResponse:
+      properties:
+        detail:
+          $ref: '#/components/schemas/ErrorDetail'
+      type: object
+      required:
+      - detail
+      title: ErrorResponse
+      description: 오류 응답 (409 상태 충돌, 422 잘못된 값)
+    GoalCard:
+      properties:
+        goal:
+          type: string
+          title: Goal
+          description: cross / forward_head / lean / long_sitting
+        label:
+          type: string
+          title: Label
+        selected:
+          type: boolean
+          title: Selected
+        unit:
+          type: string
+          title: Unit
+          description: sec
+        today:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Today
+        yesterday:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Yesterday
+        change:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Change
+        last_week_avg:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Last Week Avg
+          description: 지난 달력주(월~일) 기록 있는 날 평균
+        last_week_days:
+          type: integer
+          title: Last Week Days
+        last7:
+          items:
+            $ref: '#/components/schemas/GoalDay'
+          type: array
+          title: Last7
+          description: 최근 7일 (오래된 날부터, 마지막이 기준 날짜)
+        trend:
+          $ref: '#/components/schemas/GoalTrend'
+        main_direction:
+          anyOf:
+          - $ref: '#/components/schemas/MainDirection'
+          - type: 'null'
+          description: 최근 7일 좌우 합 (다리 꼬기·기대기만)
+      type: object
+      required:
+      - goal
+      - label
+      - selected
+      - unit
+      - last_week_days
+      - last7
+      - trend
+      title: GoalCard
+    GoalDay:
+      properties:
+        date:
+          type: string
+          title: Date
+        value:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Value
+          description: 기록 없는 날은 null
+        has_data:
+          type: boolean
+          title: Has Data
+      type: object
+      required:
+      - date
+      - has_data
+      title: GoalDay
+    GoalToday:
+      properties:
+        goal:
+          type: string
+          title: Goal
+          description: cross / forward_head / lean / long_sitting
+        label:
+          type: string
+          title: Label
+        selected:
+          type: boolean
+          title: Selected
+          description: 설정에서 고른 목표인지 (선택 저장은 ⑤)
+        today:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Today
+          description: 오늘 값 (초). long_sitting은 하루 최대 연속 착석. 기록 없으면 null
+        yesterday:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Yesterday
+          description: 어제 값. 어제 기록이 없으면 null
+        change:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Change
+          description: 오늘 − 어제
+      type: object
+      required:
+      - goal
+      - label
+      - selected
+      title: GoalToday
+    GoalTrend:
+      properties:
+        direction:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Direction
+          description: decreasing / increasing / flat (하루 1분 미만 변화). 기록 2일 미만이면 null
+        slope_min_per_day:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Slope Min Per Day
+          description: 최근 7일 직선 기울기 (분/일)
+        days:
+          type: integer
+          title: Days
+      type: object
+      required:
+      - days
+      title: GoalTrend
+    GoalsReport:
+      properties:
+        date:
+          type: string
+          title: Date
+        as_of:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: As Of
+        goals:
+          items:
+            $ref: '#/components/schemas/GoalCard'
+          type: array
+          title: Goals
+      type: object
+      required:
+      - date
+      - goals
+      title: GoalsReport
+      description: 목표 / 피드백 카드 — 4종 모두 (모두 겹치지 않는 값 기준)
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    HeadState:
+      type: string
+      enum:
+      - normal
+      - forward
+      - unknown
+      title: HeadState
+      description: 목 전방 자세 (카메라 + 거리센서)
+    History:
+      properties:
+        seconds:
+          type: integer
+          title: Seconds
+        items:
+          items:
+            $ref: '#/components/schemas/HistoryItem'
+          type: array
+          title: Items
+      type: object
+      required:
+      - seconds
+      - items
+      title: History
+      description: 최근 판단 기록 (1초에 1개)
+    HistoryItem:
+      properties:
+        ts:
+          type: number
+          title: Ts
+        seated:
+          type: boolean
+          title: Seated
+        seat_state:
+          $ref: '#/components/schemas/SeatState'
+        head_state:
+          $ref: '#/components/schemas/HeadState'
+        tilt_state:
+          $ref: '#/components/schemas/TiltState'
+        distance_mm:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Distance Mm
+        distance_level:
+          $ref: '#/components/schemas/DistanceLevel'
+      type: object
+      required:
+      - ts
+      - seated
+      - seat_state
+      - head_state
+      - tilt_state
+      - distance_mm
+      - distance_level
+      title: HistoryItem
+    HomeReport:
+      properties:
+        date:
+          type: string
+          title: Date
+        source:
+          type: string
+          title: Source
+          description: summary(자정 요약) / live(실시간 계산)
+        has_data:
+          type: boolean
+          title: Has Data
+          description: 착석 시간이 있는지
+        as_of:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: As Of
+          description: 마지막 저장 시각 — 오늘 값은 최대 1분 늦음
+        seated_sec:
+          type: number
+          title: Seated Sec
+          description: 총 착석 (unknown 포함)
+        normal_sec:
+          type: number
+          title: Normal Sec
+        abnormal_sec:
+          type: number
+          title: Abnormal Sec
+        unknown_sec:
+          type: number
+          title: Unknown Sec
+        judged_sec:
+          type: number
+          title: Judged Sec
+          description: 착석 − unknown
+        normal_ratio:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Normal Ratio
+          description: 정상 ÷ (착석 − unknown). 분모가 0이면 null
+        daily_posture:
+          anyOf:
+          - $ref: '#/components/schemas/PostureShare'
+          - type: 'null'
+          description: '하루 평균 자세: 겹치지 않는 자세별 누적 중 정상 제외 최대 (없으면 normal)'
+        lean_balance:
+          $ref: '#/components/schemas/LeanBalance'
+        goals:
+          items:
+            $ref: '#/components/schemas/GoalToday'
+          type: array
+          title: Goals
+          description: 목표 4종 (selected로 고른 것 표시)
+      type: object
+      required:
+      - date
+      - source
+      - has_data
+      - seated_sec
+      - normal_sec
+      - abnormal_sec
+      - unknown_sec
+      - judged_sec
+      - lean_balance
+      - goals
+      title: HomeReport
+      description: 홈 화면 요약
+    HourStat:
+      properties:
+        hour:
+          type: integer
+          title: Hour
+        seated_sec:
+          type: number
+          title: Seated Sec
+        judged_sec:
+          type: number
+          title: Judged Sec
+        abnormal_sec:
+          type: number
+          title: Abnormal Sec
+        abnormal_ratio:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Abnormal Ratio
+          description: 비정상 ÷ 판단 시간
+      type: object
+      required:
+      - hour
+      - seated_sec
+      - judged_sec
+      - abnormal_sec
+      title: HourStat
+    LastWeek:
+      properties:
+        start:
+          type: string
+          title: Start
+        normal_ratio:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Normal Ratio
+      type: object
+      required:
+      - start
+      title: LastWeek
+    Layout:
+      properties:
+        layout_id:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Layout Id
+          description: DB 없이 켠 서버면 null
+        n_channels:
+          type: integer
+          title: N Channels
+        channel_map:
+          items:
+            type: integer
+          type: array
+          title: Channel Map
+          description: 읽는 MCP3208 채널 (순서 = /current의 pressure, pressure_ratio)
+        positions:
+          items:
+            items:
+              type: number
+            type: array
+          type: array
+          title: Positions
+          description: 채널별 [x, y]. x 왼쪽 -1 ~ 오른쪽 +1, y 뒤 -1 ~ 앞 +1 (사람 기준)
+      type: object
+      required:
+      - n_channels
+      - channel_map
+      - positions
+      title: Layout
+      description: 센서 배치 — 거의 바뀌지 않으니 한 번 받아 두고, layout_id가 바뀌면 다시 받는다
+    LeanBalance:
+      properties:
+        left_sec:
+          type: number
+          title: Left Sec
+        right_sec:
+          type: number
+          title: Right Sec
+        right_ratio:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Right Ratio
+          description: 오른쪽 ÷ (왼쪽 + 오른쪽). 편향이 없으면 null
+      type: object
+      required:
+      - left_sec
+      - right_sec
+      title: LeanBalance
+      description: 좌우 체중 편향 (겹치지 않는 값). 홈의 '오른쪽 편향 비율'이 어느 쪽인지는 앱 담당 확인 중이라 둘 다 준다
+    MainDirection:
+      properties:
+        direction:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Direction
+          description: 'left / right (다리 꼬기: 왼다리/오른다리 위). 같으면 null'
+        left_sec:
+          type: number
+          title: Left Sec
+        right_sec:
+          type: number
+          title: Right Sec
+      type: object
+      required:
+      - left_sec
+      - right_sec
+      title: MainDirection
+    Pending:
+      properties:
+        kind:
+          $ref: '#/components/schemas/StateKind'
+          description: 어떤 판단인지 (seat / head / tilt)
+        state:
+          type: string
+          title: State
+          description: '바뀔 상태 값 (예: forward)'
+        remaining_sec:
+          type: number
+          minimum: 0.0
+          title: Remaining Sec
+          description: 확정까지 남은 초
+      type: object
+      required:
+      - kind
+      - state
+      - remaining_sec
+      title: Pending
+      description: 새 자세가 나타났지만 아직 short_filter_sec(3초)가 안 지나 확정되지 않은 것
+    Point:
+      properties:
+        x:
+          type: number
+          title: X
+        y:
+          type: number
+          title: Y
+      type: object
+      required:
+      - x
+      - y
+      title: Point
+    PostureShare:
+      properties:
+        posture:
+          type: string
+          title: Posture
+          description: 자세 이름 (forward_head, cross_left, …, normal)
+        seconds:
+          type: number
+          title: Seconds
+        ratio:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Ratio
+          description: 그 시간 ÷ (착석 − unknown)
+      type: object
+      required:
+      - posture
+      - seconds
+      title: PostureShare
+    PostureStatus:
+      type: string
+      enum:
+      - normal
+      - abnormal
+      - unknown
+      title: PostureStatus
+    RecordsReset:
+      properties:
+        confirm:
+          type: string
+          title: Confirm
+          description: 반드시 'DELETE_RECORDS'
+          examples:
+          - DELETE_RECORDS
+      type: object
+      required:
+      - confirm
+      title: RecordsReset
+      description: 기록 초기화 요청 — 앱에서 확인 절차를 거친 뒤 보낸다
+    RecordsResetResult:
+      properties:
+        deleted:
+          additionalProperties:
+            type: integer
+          type: object
+          title: Deleted
+          description: 테이블별 지운 줄 수 (설정·기준 자세는 유지)
+        resync_required:
+          type: boolean
+          title: Resync Required
+          description: true — 시각 동기화를 지웠으니 POST /time/sync를 다시 보내야 함
+      type: object
+      required:
+      - deleted
+      - resync_required
+      title: RecordsResetResult
+    ScenarioInfo:
+      properties:
+        name:
+          type: string
+          title: Name
+        description:
+          type: string
+          title: Description
+        total_sec:
+          type: number
+          title: Total Sec
+        steps:
+          items:
+            $ref: '#/components/schemas/ScenarioStep'
+          type: array
+          title: Steps
+      type: object
+      required:
+      - name
+      - description
+      - total_sec
+      - steps
+      title: ScenarioInfo
+    ScenarioSelect:
+      properties:
+        name:
+          type: string
+          title: Name
+          examples:
+          - demo
+        loop:
+          type: boolean
+          title: Loop
+          description: 끝나면 처음부터 다시
+          default: true
+        seed:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Seed
+          description: 같은 seed면 같은 값
+      type: object
+      required:
+      - name
+      title: ScenarioSelect
+    ScenarioStep:
+      properties:
+        seconds:
+          type: number
+          title: Seconds
+        phase:
+          type: string
+          title: Phase
+        seat:
+          $ref: '#/components/schemas/SeatState'
+        head:
+          $ref: '#/components/schemas/HeadState'
+        tilt:
+          $ref: '#/components/schemas/TiltState'
+        faults:
+          items:
+            type: string
+          type: array
+          title: Faults
+      type: object
+      required:
+      - seconds
+      - phase
+      - seat
+      - head
+      - tilt
+      - faults
+      title: ScenarioStep
+    SeatState:
+      type: string
+      enum:
+      - normal
+      - lean_left
+      - lean_right
+      - cross_left
+      - cross_right
+      - empty
+      - unknown
+      title: SeatState
+      description: 좌면 자세 (압력센서)
+    Seating:
+      properties:
+        ts:
+          type: number
+          title: Ts
+        seated:
+          type: boolean
+          title: Seated
+          description: 착석 구간 안인지 (5초 미만 자리 비움이면 아직 true)
+        segment:
+          anyOf:
+          - $ref: '#/components/schemas/SeatingSegment'
+          - type: 'null'
+          description: 진행 중인 구간. 구간 밖이면 null
+        status:
+          anyOf:
+          - $ref: '#/components/schemas/PostureStatus'
+          - type: 'null'
+          description: 지금 순간 normal / abnormal / unknown. 구간 밖이면 null
+        dominant:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Dominant
+          description: 대표 자세 (postures[0] / normal / unknown / away). 구간 밖이면 null
+        away_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Away Sec
+          description: 구간 중 자리 비움이 이어진 초. 앉아 있으면 null
+        end_in_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: End In Sec
+          description: 이대로 비어 있으면 몇 초 뒤 구간이 끝나는지
+      type: object
+      required:
+      - ts
+      - seated
+      title: Seating
+      description: 지금 착석 구간 — /current의 seated(3초 필터)와 달리 '자리 비움 5초' 규칙을 따른다
+    SeatingSegment:
+      properties:
+        start:
+          type: number
+          title: Start
+          description: 착석 시작 시각 (압력이 처음 들어온 순간)
+        end:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: End
+          description: 착석 끝 시각. 진행 중이면 null
+        end_reason:
+          anyOf:
+          - $ref: '#/components/schemas/EndReason'
+          - type: 'null'
+          description: away 자리 비움 5초 / stop 정지 버튼. 진행 중이면 null
+        duration_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Duration Sec
+          description: 구간 길이 (진행 중이면 지금까지)
+        first_abnormal_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: First Abnormal Sec
+          description: 구간 시작 → 첫 비정상 자세 확정(3초 유지)까지 초. 아직 없으면 null
+        normal_sec:
+          type: number
+          title: Normal Sec
+          description: 정상 시간 (목 normal + 기울기 none + 좌면 normal)
+        abnormal_sec:
+          type: number
+          title: Abnormal Sec
+          description: 비정상 시간 (나쁜 자세가 하나라도 확정)
+        unknown_sec:
+          type: number
+          title: Unknown Sec
+          description: 판단 못 한 시간 (카메라 미인식·켜는 중, 기준 측정 전, 5초 미만 자리 비움)
+      type: object
+      required:
+      - start
+      - normal_sec
+      - abnormal_sec
+      - unknown_sec
+      title: SeatingSegment
+      description: 착석 구간 한 개. 자리 비움이 5초 이어지면 끝나고, 끝 시각 = 판단 시각 − 5초
+    SeatingSegments:
+      properties:
+        hours:
+          type: integer
+          title: Hours
+        items:
+          items:
+            $ref: '#/components/schemas/SeatingSegment'
+          type: array
+          title: Items
+      type: object
+      required:
+      - hours
+      - items
+      title: SeatingSegments
+      description: 끝난 착석 구간 목록 (오래된 것부터). 지금은 서버 메모리에만 있음
+    SensorPower:
+      type: string
+      enum:
+      - 'on'
+      - 'off'
+      - warming
+      title: SensorPower
+    SensorStatus:
+      properties:
+        ok:
+          type: boolean
+          title: Ok
+          description: 최근 2초 안에 정상 값을 읽었는지
+        detail:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Detail
+      type: object
+      required:
+      - ok
+      title: SensorStatus
+    Sensors:
+      properties:
+        pressure:
+          $ref: '#/components/schemas/SensorStatus'
+        distance:
+          $ref: '#/components/schemas/SensorStatus'
+        camera:
+          $ref: '#/components/schemas/SensorStatus'
+      type: object
+      required:
+      - pressure
+      - distance
+      - camera
+      title: Sensors
+    SessionBaseline:
+      properties:
+        state:
+          $ref: '#/components/schemas/BaselinePhase'
+          description: none 기준 없음 / waiting_seat 앉기를 기다림 / measuring 측정 중 / ready
+            기준 있음 / failed 마지막 측정 실패
+        kind:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Kind
+          description: 측정 중이거나 마지막 측정의 종류 (initial / session / recalibration)
+        remaining_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Remaining Sec
+          description: 측정 중이면 남은 초 (앉기를 기다리는 중이면 측정 시간 전체)
+        fail_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Fail Reason
+          description: 실패 이유 (no_person / sensor_lost / too_much_motion)
+        using_previous:
+          type: boolean
+          title: Using Previous
+          description: 이번 측정이 실패해서 직전 성공 기준으로 판단 중인지
+        measured_at:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Measured At
+          description: 지금 쓰는 기준을 잰 시각
+      type: object
+      required:
+      - state
+      - using_previous
+      title: SessionBaseline
+      description: 세션의 기준 자세 — 시작 버튼을 누르면 앉은 게 확인된 뒤 10초 측정 (재개 때는 다시 재지 않음)
+    SessionSensors:
+      properties:
+        pressure:
+          $ref: '#/components/schemas/SensorPower'
+        camera:
+          $ref: '#/components/schemas/SensorPower'
+          description: warming = 켰지만 아직 사람을 찾기 전 (약 2초)
+        distance:
+          $ref: '#/components/schemas/SensorPower'
+      type: object
+      required:
+      - pressure
+      - camera
+      - distance
+      title: SessionSensors
+      description: 센서 전원 (자리 비움 5초면 카메라·거리 끔, 일시정지면 압력만, 정지면 모두 끔)
+    SessionState:
+      type: string
+      enum:
+      - idle
+      - running
+      - paused
+      title: SessionState
+    SessionStatus:
+      properties:
+        state:
+          $ref: '#/components/schemas/SessionState'
+          description: idle 세션 없음 / running 측정 중 / paused 일시정지
+        session_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Session Id
+          description: 마지막(또는 지금) 세션 ID. 한 번도 안 했으면 null
+        started_at:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Started At
+        ended_at:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Ended At
+          description: 정지한 시각. 진행 중이면 null
+        elapsed_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Elapsed Sec
+          description: 경과 시간 (일시정지 시간 제외)
+        paused_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Paused Sec
+          description: 일시정지한 시간 합
+        seated_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Seated Sec
+          description: 이 세션의 착석 시간 (착석 구간 합, 일시정지 제외)
+        seated_now:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Seated Now
+          description: 지금 압력이 있는지 (일시정지 중에도). 압력센서가 꺼져 있으면 null
+        sensors:
+          $ref: '#/components/schemas/SessionSensors'
+        clock_synced:
+          type: boolean
+          title: Clock Synced
+        boot_id:
+          type: string
+          title: Boot Id
+        end_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: End Reason
+          description: 마지막 세션이 끝난 이유 (stop / baseline_failed). 진행 중이면 null
+        baseline:
+          $ref: '#/components/schemas/SessionBaseline'
+      type: object
+      required:
+      - state
+      - sensors
+      - clock_synced
+      - boot_id
+      - baseline
+      title: SessionStatus
+      description: 측정 세션 상태 — 홈 하단 측정 바
+    StateKind:
+      type: string
+      enum:
+      - seat
+      - head
+      - tilt
+      title: StateKind
+    Status:
+      properties:
+        api_version:
+          type: string
+          title: Api Version
+          default: 0.1.0-mock
+        mode:
+          type: string
+          title: Mode
+          description: mock(더미 데이터) / real. mock이면 앱에 '예시 데이터' 표시
+        server_time:
+          type: number
+          title: Server Time
+        last_record_ts:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Last Record Ts
+        baseline_ready:
+          type: boolean
+          title: Baseline Ready
+        sensors:
+          $ref: '#/components/schemas/Sensors'
+        scenario:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Scenario
+          description: mock 모드에서 재생 중인 시나리오
+        scenario_elapsed_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Scenario Elapsed Sec
+        scenario_total_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Scenario Total Sec
+      type: object
+      required:
+      - mode
+      - server_time
+      - last_record_ts
+      - baseline_ready
+      - sensors
+      title: Status
+    TiltCompare:
+      properties:
+        this_week:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: This Week
+          description: 이번 주 하루 평균 (기록 있는 날만)
+        last_week:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Last Week
+        change:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Change
+        days_this:
+          type: integer
+          title: Days This
+        days_last:
+          type: integer
+          title: Days Last
+        direction:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Direction
+          description: 이번 주 주된 기울기 방향 (left/right). 같거나 없으면 null
+      type: object
+      required:
+      - days_this
+      - days_last
+      title: TiltCompare
+    TiltState:
+      type: string
+      enum:
+      - none
+      - left
+      - right
+      - unknown
+      title: TiltState
+      description: 상체 좌우 기울어짐 (카메라). 방향은 사람 기준
+    TimeStatus:
+      properties:
+        synced:
+          type: boolean
+          title: Synced
+          description: 이 서버가 켜진 뒤 동기화했는지
+        boot_id:
+          type: string
+          title: Boot Id
+          description: 서버가 켜질 때마다(재부팅 포함) 바뀜. 바뀌었으면 다시 동기화
+        timezone:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Timezone
+        app_time:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: App Time
+          description: 앱 기준 지금 시각. 동기화 전이면 null
+        local_time:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Local Time
+          description: app_time을 시간대로 바꾼 ISO 문자열 (확인용)
+        synced_at:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Synced At
+          description: 마지막 동기화 때 앱이 보낸 시각
+        resync_required:
+          type: boolean
+          title: Resync Required
+          description: true면 POST /time/sync 필요
+        offset_change_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Offset Change Sec
+          description: 다시 동기화했을 때 시각이 바뀐 양 (초). 첫 동기화·조회에서는 null
+        applied:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Applied
+          description: 이번 동기화를 적용했는지. 0.5초 이내로 뒤로 가는 변경은 false(시각 그대로). 조회에서는 null
+        message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Message
+      type: object
+      required:
+      - synced
+      - boot_id
+      - resync_required
+      title: TimeStatus
+      description: Pi의 시각 동기화 상태. Pi OS 시계는 바꾸지 않고 '앱 시각 − Pi 단조시계' 차이만 저장
+    TimeSync:
+      properties:
+        app_time:
+          type: number
+          title: App Time
+          description: 앱의 현재 시각 (time.time()과 같은 초, 소수 가능)
+          examples:
+          - 1791207600.123
+        timezone:
+          type: string
+          title: Timezone
+          description: 시간대 (Asia/Seoul만 가능)
+          default: Asia/Seoul
+          examples:
+          - Asia/Seoul
+      type: object
+      required:
+      - app_time
+      title: TimeSync
+      description: '앱 → Pi: 현재 시각과 시간대. 연결할 때와 세션 시작 전마다 보낸다'
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+    WeekCompare:
+      properties:
+        this_week:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: This Week
+          description: 이번 주 하루 평균 (기록 있는 날만)
+        last_week:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Last Week
+        change:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Change
+        days_this:
+          type: integer
+          title: Days This
+        days_last:
+          type: integer
+          title: Days Last
+      type: object
+      required:
+      - days_this
+      - days_last
+      title: WeekCompare
+    WeekDay:
+      properties:
+        date:
+          type: string
+          title: Date
+        weekday:
+          type: integer
+          title: Weekday
+          description: 0 월 ~ 6 일
+        has_data:
+          type: boolean
+          title: Has Data
+        source:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source
+        seated_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Seated Sec
+          description: 미래 날짜면 null
+        normal_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Normal Sec
+        other_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Other Sec
+          description: 착석 − 정상 (비정상 + unknown)
+      type: object
+      required:
+      - date
+      - weekday
+      - has_data
+      title: WeekDay
+    WeeklyCompare:
+      properties:
+        forward_head:
+          $ref: '#/components/schemas/WeekCompare'
+        cross:
+          $ref: '#/components/schemas/WeekCompare'
+        tilt_direction:
+          $ref: '#/components/schemas/TiltCompare'
+        max_continuous:
+          $ref: '#/components/schemas/WeekCompare'
+        distance_mm:
+          $ref: '#/components/schemas/DistanceCompare'
+      type: object
+      required:
+      - forward_head
+      - cross
+      - tilt_direction
+      - max_continuous
+      - distance_mm
+      title: WeeklyCompare
+    WeeklyReport:
+      properties:
+        start:
+          type: string
+          title: Start
+          description: 그 주 월요일
+        end:
+          type: string
+          title: End
+        requested_start:
+          type: string
+          title: Requested Start
+          description: 요청한 날짜 (월요일이 아니면 그 주 월요일로 맞춤)
+        as_of:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: As Of
+        normal_ratio:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Normal Ratio
+          description: 7일 정상 합 ÷ 7일 (착석 − unknown) 합
+        last_week:
+          $ref: '#/components/schemas/LastWeek'
+        delta_pp:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Delta Pp
+          description: 지난주 대비 %p
+        days:
+          items:
+            $ref: '#/components/schemas/WeekDay'
+          type: array
+          title: Days
+        compare:
+          $ref: '#/components/schemas/WeeklyCompare'
+        hourly:
+          items:
+            $ref: '#/components/schemas/HourStat'
+          type: array
+          title: Hourly
+          description: 이번 주 시간대별 (0~23시)
+        worst_hour:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Worst Hour
+          description: 판단 시간 10분 이상인 시간대 중 비정상 비율이 가장 높은 시각
+      type: object
+      required:
+      - start
+      - end
+      - requested_start
+      - last_week
+      - days
+      - compare
+      - hourly
+      title: WeeklyReport
+      description: 주간 리포트 (월~일)
