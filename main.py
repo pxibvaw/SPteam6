@@ -44,7 +44,10 @@ def build_source(cfg: dict, args):
                             expected_channels=cfg["pressure"]["n_channels"])
     if args.mode == "real":
         from hardware.sensors.factory import build_hub     # Pi 전용 라이브러리는 real일 때만 불러옴
-        return build_hub(cfg, camera=args.camera, rotate180=args.rotate180)
+        hub = build_hub(cfg, camera=args.camera, rotate180=args.rotate180)
+        if hub.pose is not None and hasattr(hub.pose, "power_on"):
+            hub.pose.power_on()          # 카메라 PoseSource는 켜 줘야 프레임을 읽기 시작함 (서버는 전원 정책이 켬)
+        return hub
     raise ConfigError(f"알 수 없는 mode: {args.mode}")
 
 
